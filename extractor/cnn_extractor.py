@@ -7,13 +7,13 @@ import torch.nn.functional as F
 
 
 class ResBlock(L.LightningModule):
-    def __init__(self, in_channels, out_channels, stride=1):
+    def __init__(self, in_channels, out_channels, stride=1, dtype=torch.float32):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, stride=stride, padding=1, bias=False)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, stride=1, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, stride=stride, padding=1, bias=False, dtype=dtype)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, stride=1, padding=1, bias=False, dtype=dtype)
         self.relu = nn.ReLU()
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.bn1 = nn.BatchNorm2d(out_channels, dtype=dtype)
+        self.bn2 = nn.BatchNorm2d(out_channels, dtype=dtype)
         nn.init.kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')
         nn.init.kaiming_normal_(self.conv2.weight, mode='fan_out', nonlinearity='relu')
         nn.init.constant_(self.bn1.weight, 1)
@@ -40,25 +40,26 @@ class ResBlock(L.LightningModule):
 
         
 class CNNExtractor(L.LightningModule): # [B, K, 3, H, W] -> [B, K, 128, H//4, W//4]
-    def __init__(self, out_channels=128):
+    def __init__(self, out_channels=128, dtype=torch.float32):
         super().__init__()
+        self.to(dtype)
         hidden_channels1 = out_channels // 4
         hidden_channels2 = out_channels // 2
-        self.conv1 = nn.Conv2d(3, hidden_channels1, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(hidden_channels1)
+        self.conv1 = nn.Conv2d(3, hidden_channels1, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
+        self.bn1 = nn.BatchNorm2d(hidden_channels1, dtype=dtype)
         nn.init.kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')
         nn.init.constant_(self.bn1.weight, 1)
         nn.init.constant_(self.bn1.bias, 0)
         self.relu = nn.ReLU()
-        self.res1 = ResBlock(hidden_channels1, hidden_channels1)
-        self.res2 = ResBlock(hidden_channels1, hidden_channels1)
-        self.res3 = ResBlock(hidden_channels1, hidden_channels1)
-        self.res4 = ResBlock(hidden_channels1, hidden_channels2, stride=2)
-        self.res5 = ResBlock(hidden_channels2, hidden_channels2)
-        self.res6 = ResBlock(hidden_channels2, out_channels, stride=2)
+        self.res1 = ResBlock(hidden_channels1, hidden_channels1, dtype=dtype)
+        self.res2 = ResBlock(hidden_channels1, hidden_channels1, dtype=dtype)
+        self.res3 = ResBlock(hidden_channels1, hidden_channels1, dtype=dtype)
+        self.res4 = ResBlock(hidden_channels1, hidden_channels2, stride=2, dtype=dtype)
+        self.res5 = ResBlock(hidden_channels2, hidden_channels2, dtype=dtype)
+        self.res6 = ResBlock(hidden_channels2, out_channels, stride=2, dtype=dtype)
         self.proj = nn.Conv2d(
             out_channels, out_channels, 
-            kernel_size=1, stride=1, padding=0, bias=True
+            kernel_size=1, stride=1, padding=0, bias=True, dtype=dtype
         )
         nn.init.kaiming_normal_(self.proj.weight, mode='fan_out', nonlinearity='relu')
         nn.init.constant_(self.proj.bias, 0)

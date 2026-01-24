@@ -22,17 +22,21 @@ def patchify(x: torch.Tensor) -> torch.Tensor:
 
 
 class Extractor(L.LightningModule):
-    def __init__(self, image_size=256, hidden_dim=128, swin_divisions=2):
+    def __init__(
+        self, image_size=256, hidden_dim=128, swin_divisions=2, 
+        cnn_dtype=torch.float32, transformer_dtype=torch.bfloat16
+    ):
         super().__init__()
-        window_size = image_size // swin_divisions
+        window_size = image_size // 4 // swin_divisions
         shift_size = window_size // 2
-        self.cnn_extractor = CNNExtractor(hidden_dim)
+        self.cnn_extractor = CNNExtractor(hidden_dim, dtype=cnn_dtype)
         self.transformer_extractor = TransformerExtractor(
-            hidden_dim, window_size, shift_size
+            hidden_dim, window_size, shift_size, dtype=transformer_dtype
         )
 
     def forward(self, x):
         x = self.cnn_extractor(x) # [B, K, 128, H//4, W//4]
         x = patchify(x) # [B*K, K=(src|tgt), H//4, W//4, 128]
+        x = x.to(self.transformer_extractor.dtype)
         x = self.transformer_extractor(x) # [B*K, H//4, W//4, 128]
         return x # [B*K, H//4, W//4, 128]

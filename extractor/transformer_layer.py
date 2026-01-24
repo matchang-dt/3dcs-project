@@ -69,20 +69,21 @@ def make_attn_mask(h, w, window_size, shift_size, device):
 
 
 class WindowSelfAttention(L.LightningModule):
-    def __init__(self, dim, window_size, num_heads=1):
+    def __init__(self, dim, window_size, num_heads=1, dtype=torch.float32):
         super().__init__()
+        self.to(dtype)
         self.dim = dim
         self.window_size = window_size
         self.num_heads = num_heads
         head_dim = dim // num_heads
         self.scale = head_dim ** -0.5
 
-        self.qkv = nn.Linear(dim, dim * 3)
-        self.proj = nn.Linear(dim, dim)
+        self.qkv = nn.Linear(dim, dim * 3, dtype=dtype)
+        self.proj = nn.Linear(dim, dim, dtype=dtype)
 
         # relative position bias
         size = (2 * window_size - 1) ** 2
-        self.rel_pos = nn.Parameter(torch.zeros(size, num_heads)) #[window_size*2 - 1)**2, num_heads]
+        self.rel_pos = nn.Parameter(torch.zeros(size, num_heads, dtype=dtype)) #[window_size*2 - 1)**2, num_heads]
 
         coords = torch.arange(window_size)
         coords = torch.stack(torch.meshgrid(coords, coords, indexing="ij"))
@@ -115,27 +116,28 @@ class WindowSelfAttention(L.LightningModule):
             attn = attn + mask.unsqueeze(1).unsqueeze(0) # [B, nW, num_heads, n, n]
             attn = attn.view(-1, self.num_heads, n, n) # [B*nW, num_heads, n, n]
 
-        attn = attn.softmax(dim=-1) # [B * nW, num_heads, n, n]
+        attn = attn.softmax(dim=-1).to(self.dtype) # [B * nW, num_heads, n, n]
         x = (attn @ value).transpose(1, 2).reshape(b, n, c) # c = num_heads * head_dim
         return self.proj(x) # [B*nW, n, c]
 
 
 class WindowCrossAttention(L.LightningModule):
-    def __init__(self, dim, window_size, num_heads=1):
+    def __init__(self, dim, window_size, num_heads=1, dtype=torch.float32):
         super().__init__()
+        self.to(dtype)
         self.dim = dim
         self.window_size = window_size
         self.num_heads = num_heads
         head_dim = dim // num_heads
         self.scale = head_dim ** -0.5
 
-        self.q = nn.Linear(dim, dim)
-        self.kv = nn.Linear(dim, dim * 2)
-        self.proj = nn.Linear(dim, dim)
+        self.q = nn.Linear(dim, dim, dtype=dtype)
+        self.kv = nn.Linear(dim, dim * 2, dtype=dtype)
+        self.proj = nn.Linear(dim, dim, dtype=dtype)
         
         # relative position bias
         size = (2 * window_size - 1) ** 2
-        self.rel_pos = nn.Parameter(torch.zeros(size, num_heads)) # [(2 * window_size - 1)**2, num_heads]
+        self.rel_pos = nn.Parameter(torch.zeros(size, num_heads, dtype=dtype)) # [(2 * window_size - 1)**2, num_heads]
 
         coords = torch.arange(window_size)
         coords = torch.stack(torch.meshgrid(coords, coords, indexing="ij"))
@@ -172,28 +174,28 @@ class WindowCrossAttention(L.LightningModule):
             attn = attn + mask.unsqueeze(1).unsqueeze(0) # [B, nW, num_heads, n, (K-1)*n]
             attn = attn.view(-1, self.num_heads, n, k * n) # [B*nW, num_heads, n, (K-1)*n]
 
-        attn = attn.softmax(dim=-1) # [B*nW, num_heads, n, n*(K-1)]
+        attn = attn.softmax(dim=-1).to(self.dtype) # [B*nW, num_heads, n, n*(K-1)]
         x = (attn @ value).transpose(1, 2).reshape(b, n, c) # c = num_heads * head_dim
         return self.proj(x) # [B*nW, n, c]
 
 
 class SwinCrossBlock(L.LightningModule):
-    def __init__(self, dim=128, num_heads=1, window_size=32, shift_size=16):
+    def __init__(self, dim=128, num_heads=1, window_size=32, shift_size=16, dtype=torch.float32):
         super().__init__()
         self.window_size = window_size
         self.shift_size = shift_size
 
-        self.norm1 = nn.LayerNorm(dim)
-        self.norm_cross = nn.LayerNorm(dim)
-        self.norm2 = nn.LayerNorm(dim)
+        self.norm1 = nn.LayerNorm(dim, dtype=dtype)
+        self.norm_cross = nn.LayerNorm(dim, dtype=dtype)
+        self.norm2 = nn.LayerNorm(dim, dtype=dtype)
 
-        self.self_attn = WindowSelfAttention(dim, window_size, num_heads)
-        self.cross_attn = WindowCrossAttention(dim, window_size, num_heads)
+        self.self_attn = WindowSelfAttention(dim, window_size, num_heads, dtype=dtype)
+        self.cross_attn = WindowCrossAttention(dim, window_size, num_heads, dtype=dtype)
 
         self.mlp = nn.Sequential(
-            nn.Linear(dim, 4 * dim),
+            nn.Linear(dim, 4 * dim, dtype=dtype),
             nn.GELU(),
-            nn.Linear(4 * dim, dim),
+            nn.Linear(4 * dim, dim, dtype=dtype),
         )
 
         self.attn_mask = None
@@ -204,7 +206,7 @@ class SwinCrossBlock(L.LightningModule):
 
         if self.shift_size > 0 and self.attn_mask is None:
             self.attn_mask = make_attn_mask(
-                h, w, self.window_size, self.shift_size, x.device
+                h, w, self.window_size, self.shift_size, x.device,
             ) # [window_num, window_size**2, window_size**2]
 
         # Self Attention
