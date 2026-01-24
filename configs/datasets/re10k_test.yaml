@@ -1,0 +1,19 @@
+# RE10K Dataset Configuration
+# Test split
+
+_target_: datasets.dataset.DatasetCfg
+
+name: re10k
+data_root: /workspace/re10kvol/re10k
+stage: test
+
+# View sampling configuration
+num_input_views: 2
+num_target_views: 4
+
+# Image configuration
+target_image_size: 256
+
+# No baseline expansion for test
+max_train_steps: 0
+
