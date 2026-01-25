@@ -1,7 +1,9 @@
 """
-Resize + center crops dataset images to a target size.
+Center crop + resize dataset images to a target size.
 Datasets like MipNerf360 and Tanks & Temples may require this since
 their image resolutions may not be multiplies of 16 (which is required by MVSplat).
+
+The processing order is: center crop first (to maintain aspect ratio), then resize.
 """
 
 import torch
@@ -52,19 +54,23 @@ def resize_and_crop_images(
     intrinsics: torch.Tensor | None = None,     # (B, 3, 3)
     to_multiple_of_16: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
-    """Rescale and center crop images to target size, updating intrinsics."""
+    """Center crop first, then resize images to target size, updating intrinsics."""
     H_in, W_in = images.shape[-2:]
     H_out, W_out = out_shape
 
-    # minimum scale to cover the crop region
-    scale = max(H_out / H_in, W_out / W_in)
+    # Step 1: Center crop to a square (maintain aspect ratio)
+    # Crop to the smaller dimension to preserve aspect ratio
+    crop_size = min(H_in, W_in)
+    cropped, K = center_crop_images(images, (crop_size, crop_size), intrinsics)
+    
+    # Step 2: Resize the cropped square image to target size
     if to_multiple_of_16:
-        resize_shape = round_to_multiple_of_16(round(H_in * scale), round(W_in * scale))
-    else: # instead, 
-        resize_shape = (round(H_in * scale), round(W_in * scale))
-    resized, K = resize_images(images, resize_shape, intrinsics)
-    cropped, K = center_crop_images(resized, out_shape, K)
-    return cropped, K
+        resize_shape = round_to_multiple_of_16(H_out, W_out)
+    else:
+        resize_shape = (H_out, W_out)
+    
+    resized, K = resize_images(cropped, resize_shape, K)
+    return resized, K
 
 def round_to_multiple_of_16(H: int, W: int) -> tuple[int, int]:
     """Get closest resolutions that are multiples of 16 to fit convolution requirements."""
