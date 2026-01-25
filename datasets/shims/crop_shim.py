@@ -6,7 +6,8 @@ their image resolutions may not be multiplies of 16 (which is required by MVSpla
 
 import torch
 import torchvision.transforms.functional as TF
-from datasets.view_sampler.view_sampler import ViewSet
+from ..view_sampler.view_sampler import ViewSet
+
 
 def resize_images(
     images: torch.Tensor, # (B, 3, H, W)
@@ -71,6 +72,6 @@ def round_to_multiple_of_16(H: int, W: int) -> tuple[int, int]:
     W_rounded = round(W / 16) * 16
     return H_rounded, W_rounded
 
-def apply_crop_shim_to_views(views: ViewSet, shape: tuple[int, int]) -> ViewSet:
-    crop_images, crop_intrinsics = resize_and_crop_images(views.images, shape, views.intrinsics)
-    return ViewSet(images=crop_images, intrinsics=crop_intrinsics, extrinsics=views.extrinsics)
+def apply_crop_shim_to_views(views: ViewSet, shape: tuple[int, int], mulitple_of_16: bool = True) -> ViewSet:
+    crop_images, crop_intrinsics = resize_and_crop_images(views.images, shape, views.intrinsics, mulitple_of_16)
+    return ViewSet(extrinsics=views.extrinsics, intrinsics=crop_intrinsics, images=crop_images)

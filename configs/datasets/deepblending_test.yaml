@@ -1,0 +1,18 @@
+# Deep Blending Dataset Configuration
+# For evaluation on Deep Blending scenes
+
+_target_: datasets.dataset.DatasetCfg
+
+name: deepblending
+data_root: /workspace/re10kvol/deepblending
+stage: test  # Deep Blending is typically used for evaluation
+
+# View sampling configuration
+num_input_views: 2
+num_target_views: -1  # Use all remaining views
+
+# Image configuration
+target_image_size: 256
+
+# No baseline expansion for evaluation
+max_train_steps: 0

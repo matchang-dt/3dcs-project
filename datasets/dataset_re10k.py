@@ -23,6 +23,11 @@ import numpy as np
 
 from .view_sampler.view_sampler import ViewSet, ViewSampler, ViewSamplerDefault
 
+# ! CAREFUL WITH THIS AND ACID DATASETS
+# target_image_size for other datasets are used to scale original images
+# but RE10K, ACID are already in the correct size
+# therefore, if we choose a different target_image_size, this breaks.
+
 @dataclass
 class Re10kDatasetCfg:
     data_root: str = "/workspace/re10kvol/re10k"
@@ -175,9 +180,9 @@ class Re10kDataset(IterableDataset):
             intrinsics, extrinsics = self.parse_cameras(cameras)
             
             viewset = ViewSet(
-                images=images,
+                extrinsics=extrinsics,
                 intrinsics=intrinsics,
-                extrinsics=extrinsics
+                images=images
             )
             
             return viewset

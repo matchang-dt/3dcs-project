@@ -6,17 +6,20 @@ import torch
 
 class ViewSet:
     def __init__(self,
-        images: torch.Tensor | None,
-        intrinsics: torch.Tensor,
         extrinsics: torch.Tensor,
+        intrinsics: torch.Tensor,
+        images: torch.Tensor | None = None
     ):
         # these should be all index aligned and in sorted temporal order with 'timestamps'
-        self.images = images # (V, H, W, 3)
         self.intrinsics = intrinsics # (V, 3, 3)
         self.extrinsics = extrinsics # (V, 4, 4)
+        self.images = images # (V, H, W, 3) can be None to describe poses
 
     def _debug_save(self, output_path: str = "default_view_debug_directory"):
         # DEBUG: save all view data into an output directory
+        assert self.images is not None
+        assert self.intrinsics is not None
+        assert self.extrinsics is not None
         for i in range(self.images.shape[0]):
             image = self.images[i].cpu().numpy()
             intrinsics = self.intrinsics[i].cpu().numpy()
@@ -58,7 +61,12 @@ class ViewSamplerDefault(ViewSampler):
             raise ValueError("Expects num_input_views >= 2 for now")
 
         # Use a fraction for spread: at the start, close to 0; at the end, nearly 1
-        spread_frac = min(1.0, max(0.0, curr_iters / max_iters))
+        # Handle case where max_iters is 0 or None to avoid division by zero
+        if curr_iters is not None and max_iters is not None and max_iters > 0:
+            spread_frac = min(1.0, max(0.0, curr_iters / max_iters))
+        else:
+            # If no training steps or max_iters is 0, use full spread (test mode)
+            spread_frac = 1.0
 
         # Exponential or root ramp for smoother transition
         ramp = spread_frac ** 0.5
@@ -90,7 +98,11 @@ class ViewSamplerDefault(ViewSampler):
         all_indices = set(range(num_total_views))
         input_set = set(input_indices)
         remaining_indices = sorted(list(all_indices - input_set))
-        if len(remaining_indices) < num_target_views:
+        
+        # Handle num_target_views == -1 to mean "use all remaining views"
+        if num_target_views == -1:
+            target_indices = remaining_indices
+        elif len(remaining_indices) < num_target_views:
             # If not enough, just roll over the first ones
             target_indices = remaining_indices + input_indices[:(num_target_views-len(remaining_indices))]
         else:
@@ -102,7 +114,7 @@ class ViewSamplerDefault(ViewSampler):
             images = viewset.images[indices] if viewset.images is not None else None
             intrinsics = viewset.intrinsics[indices]
             extrinsics = viewset.extrinsics[indices]
-            return ViewSet(images, intrinsics, extrinsics)
+            return ViewSet(extrinsics, intrinsics, images)
 
         context_views = subset_view(all_views, input_indices)
         target_views = subset_view(all_views, target_indices)

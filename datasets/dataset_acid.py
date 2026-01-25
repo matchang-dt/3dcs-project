@@ -22,6 +22,12 @@ from PIL import Image
 import numpy as np
 
 from .view_sampler.view_sampler import ViewSet, ViewSampler, ViewSamplerDefault
+from .shims.crop_shim import apply_crop_shim_to_views
+
+# ! CAREFUL WITH THIS AND RE10K DATASETS
+# target_image_size for other datasets are used to scale original images
+# but RE10K, ACID are already in the correct size
+# therefore, if we choose a different target_image_size, this breaks.
 
 @dataclass
 class AcidDatasetCfg:
@@ -175,9 +181,9 @@ class AcidDataset(IterableDataset):
             intrinsics, extrinsics = self.parse_cameras(cameras)
             
             viewset = ViewSet(
-                images=images,
+                extrinsics=extrinsics,
                 intrinsics=intrinsics,
-                extrinsics=extrinsics
+                images=images
             )
             
             return viewset

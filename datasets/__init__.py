@@ -5,6 +5,8 @@ from .dataset_acid import AcidDataset, AcidDatasetCfg
 from .dataset_re10k import Re10kDataset, Re10kDatasetCfg
 from .dataset_mipnerf360 import MipNeRF360Dataset, MipNeRF360DatasetCfg
 from .dataset_tnt import TanksAndTemplesDataset, TanksAndTemplesDatasetCfg
+from .dataset_deepblending import DeepBlendingDataset, DeepBlendingDatasetCfg
+from .dataset_dtu import DTUDataset, DTUDatasetCfg
 from .dataset_colmap import ColmapDataset
 
 __all__ = [
@@ -19,5 +21,9 @@ __all__ = [
     'MipNeRF360DatasetCfg',
     'TanksAndTemplesDataset',
     'TanksAndTemplesDatasetCfg',
+    'DeepBlendingDataset',
+    'DeepBlendingDatasetCfg',
+    'DTUDataset',
+    'DTUDatasetCfg',
     'ColmapDataset',
 ]

@@ -1,0 +1,17 @@
+defaults:
+  - _self_
+
+name: dtu
+
+data_root: /workspace/re10kvol/dtu
+stage: test
+num_input_views: 2
+num_target_views: 4
+target_image_size: [256, 256]
+max_train_steps: 300000
+view_sampler: null
+light_idx: 3  # Lighting condition (0-6) for DTU
+
+# Dataset will look for:
+# - Images in: {data_root}/Rectified/scan{N}_train/rect_{camera_id}_{light_idx}_r5000.png
+# - Cameras in: {data_root}/Cameras/train/{camera_id}_cam.txt
