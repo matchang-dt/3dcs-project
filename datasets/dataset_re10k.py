@@ -15,7 +15,7 @@ import torch
 import torchvision.transforms.functional as TF
 from dataclasses import dataclass
 from torch.utils.data import IterableDataset
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from pathlib import Path
 from io import BytesIO
 from PIL import Image
@@ -29,7 +29,7 @@ class Re10kDatasetCfg:
     stage: str = "train"
     num_input_views: int = 2
     num_target_views: int = 4
-    target_image_size: int = 256
+    target_image_size: Tuple[int, int] = (256, 256)
     max_train_steps: int = 300000
     view_sampler: ViewSampler = None
 
@@ -40,7 +40,7 @@ class Re10kDataset(IterableDataset):
         stage: str = "train",
         num_input_views: int = 2,
         num_target_views: int = 4,
-        target_image_size: int = 256,
+        target_image_size: Tuple[int, int] = (256, 256),
         max_train_steps: int = 300000,
         view_sampler: ViewSampler = None,
     ):
@@ -99,7 +99,7 @@ class Re10kDataset(IterableDataset):
         """
         jpeg_bytes = jpeg_tensor.cpu().numpy().tobytes()
         image = Image.open(BytesIO(jpeg_bytes)).convert('RGB')
-        image = image.resize((self.target_image_size, self.target_image_size), Image.LANCZOS)
+        image = image.resize((self.target_image_size[1], self.target_image_size[0]), Image.LANCZOS)
         image_tensor = TF.to_tensor(image)
         return image_tensor
     
@@ -125,10 +125,10 @@ class Re10kDataset(IterableDataset):
         cy_norm = cameras[:, 3]
         
         # Denormalize intrinsics for actual image size
-        fx = fx_norm * self.target_image_size
-        fy = fy_norm * self.target_image_size
-        cx = cx_norm * self.target_image_size
-        cy = cy_norm * self.target_image_size
+        fx = fx_norm * self.target_image_size[1]
+        fy = fy_norm * self.target_image_size[0]
+        cx = cx_norm * self.target_image_size[1]
+        cy = cy_norm * self.target_image_size[0]
         
         # Build intrinsics matrix [V, 3, 3]
         intrinsics = torch.zeros(V, 3, 3, dtype=cameras.dtype, device=cameras.device)

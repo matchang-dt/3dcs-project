@@ -1,0 +1,18 @@
+# Tanks & Temples Dataset Configuration
+# For evaluation on Tanks & Temples scenes
+
+_target_: datasets.dataset.DatasetCfg
+
+name: tnt
+data_root: /workspace/re10kvol/tnt
+stage: test  # Tanks & Temples is typically used for evaluation
+
+# View sampling configuration
+num_input_views: 2
+num_target_views: -1  # Use all remaining views
+
+# Image configuration
+target_image_size: 256
+
+# No baseline expansion for evaluation
+max_train_steps: 0

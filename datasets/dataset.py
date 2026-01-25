@@ -6,11 +6,13 @@ from dataclasses import dataclass
 from typing import Optional
 from .dataset_acid import AcidDataset
 from .dataset_re10k import Re10kDataset
+from .dataset_mipnerf360 import MipNeRF360Dataset
+from .dataset_tnt import TanksAndTemplesDataset
 
 
 @dataclass
 class DatasetCfg:
-    name: str  # ex. 'acid', 're10k'
+    name: str  # ex. 'acid', 're10k', 'mipnerf360', 'tnt'
     data_root: str  # path to dataset root directory
     stage: str = "train"  # 'train', 'test', or 'validation'
     num_input_views: int = 2
@@ -23,6 +25,8 @@ class DatasetCfg:
 DATASETS = {
     "acid": AcidDataset,
     "re10k": Re10kDataset,
+    "mipnerf360": MipNeRF360Dataset,
+    "tnt": TanksAndTemplesDataset,
 }
 
 def build_dataset(config: DatasetCfg):
