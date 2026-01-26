@@ -98,43 +98,77 @@ class AcidDataset(IterableDataset):
         """Update current training step for baseline expansion."""
         self.current_step = step
     
-    def decode_jpeg(self, jpeg_tensor: torch.Tensor) -> torch.Tensor:
+    def decode_jpeg(self, jpeg_tensor: torch.Tensor) -> Tuple[torch.Tensor, Tuple[int, int]]:
         """
         Decode 1D JPEG tensor to RGB image.
         Returns: RGB image tensor of shape [3, H, W], float32 in [0, 1]
+                 Original image dimensions (H, W) before any transformations
+        
+        Uses center crop then resize to maintain aspect ratio and avoid distortion.
         """
         jpeg_bytes = jpeg_tensor.cpu().numpy().tobytes()
         image = Image.open(BytesIO(jpeg_bytes)).convert('RGB')
+        
+        # Store original dimensions
+        W_orig, H_orig = image.size
+        original_dims = (H_orig, W_orig)
+        
+        # Center crop to square first to maintain aspect ratio
+        crop_size = min(H_orig, W_orig)
+        left = (W_orig - crop_size) // 2
+        top = (H_orig - crop_size) // 2
+        image = image.crop((left, top, left + crop_size, top + crop_size))
+        
+        # Then resize to target size
         image = image.resize((self.target_image_size[1], self.target_image_size[0]), Image.LANCZOS)
         image_tensor = TF.to_tensor(image)
-        return image_tensor
+        return image_tensor, original_dims
     
-    def parse_cameras(self, cameras: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def parse_cameras(self, cameras: torch.Tensor, original_dims: Tuple[int, int]) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Parse camera parameters into intrinsics and extrinsics.
         
         Args:
             cameras: [V, 18] tensor with format:
                 [fx, fy, cx, cy, 0, 0, R00, R01, R02, t0, R10, R11, R12, t1, R20, R21, R22, t2]
-                Note: fx, fy, cx, cy are normalized to [0, 1]
+                Note: fx, fy, cx, cy are normalized to [0, 1] for the ORIGINAL image dimensions
+            original_dims: (H, W) original image dimensions before crop/resize
         
         Returns:
-            intrinsics: [V, 3, 3] camera intrinsics (denormalized for target_image_size)
+            intrinsics: [V, 3, 3] camera intrinsics (adjusted for center crop and target_image_size)
             extrinsics: [V, 4, 4] camera extrinsics (world-to-camera transform)
         """
         V = cameras.shape[0]
+        H_orig, W_orig = original_dims
         
-        # Extract intrinsics (normalized)
+        # Extract intrinsics (normalized to original image size)
         fx_norm = cameras[:, 0]
         fy_norm = cameras[:, 1]
         cx_norm = cameras[:, 2]
         cy_norm = cameras[:, 3]
         
-        # Denormalize intrinsics for actual image size
-        fx = fx_norm * self.target_image_size[1]
-        fy = fy_norm * self.target_image_size[0]
-        cx = cx_norm * self.target_image_size[1]
-        cy = cy_norm * self.target_image_size[0]
+        # Denormalize intrinsics for original image size
+        fx_orig = fx_norm * W_orig
+        fy_orig = fy_norm * H_orig
+        cx_orig = cx_norm * W_orig
+        cy_orig = cy_norm * H_orig
+        
+        # Adjust for center crop (crop to min(H, W) square)
+        crop_size = min(H_orig, W_orig)
+        off_x = (W_orig - crop_size) // 2
+        off_y = (H_orig - crop_size) // 2
+        
+        cx_cropped = cx_orig - off_x
+        cy_cropped = cy_orig - off_y
+        
+        # Scale for resize from crop_size to target_image_size
+        scale_x = self.target_image_size[1] / crop_size
+        scale_y = self.target_image_size[0] / crop_size
+        
+        fx = fx_orig * scale_x
+        fy = fy_orig * scale_y
+        cx = cx_cropped * scale_x
+        cy = cy_cropped * scale_y
         
         # Build intrinsics matrix [V, 3, 3]
         intrinsics = torch.zeros(V, 3, 3, dtype=cameras.dtype, device=cameras.device)
@@ -169,16 +203,21 @@ class AcidDataset(IterableDataset):
             
             num_views = len(jpeg_images)
             
-            # Decode all images
+            # Decode all images and get original dimensions
             images = []
+            original_dims_list = []
             for jpeg_tensor in jpeg_images:
-                img = self.decode_jpeg(jpeg_tensor)
+                img, orig_dims = self.decode_jpeg(jpeg_tensor)
                 images.append(img)
+                original_dims_list.append(orig_dims)
             
             images = torch.stack(images, dim=0)
             
-            # Parse cameras
-            intrinsics, extrinsics = self.parse_cameras(cameras)
+            # Use the first image's original dimensions (should be same for all)
+            original_dims = original_dims_list[0]
+            
+            # Parse cameras with original dimensions
+            intrinsics, extrinsics = self.parse_cameras(cameras, original_dims)
             
             viewset = ViewSet(
                 extrinsics=extrinsics,
