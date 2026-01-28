@@ -10,6 +10,26 @@ import torch
 import torchvision.transforms.functional as TF
 from ..view_sampler.view_sampler import ViewSet
 
+def update_intrinsics_for_resize(intrinsics: torch.Tensor, in_shape: tuple[int, int], out_shape: tuple[int, int]) -> torch.Tensor:
+    H_in, W_in = in_shape
+    H_out, W_out = out_shape
+    K = intrinsics.clone()
+    sx, sy = W_out / W_in, H_out / H_in
+    K[:, 0, 0] *= sx
+    K[:, 0, 2] *= sx
+    K[:, 1, 1] *= sy
+    K[:, 1, 2] *= sy
+    return K
+
+def update_intrinsics_for_crop(intrinsics: torch.Tensor, in_shape: tuple[int, int], out_shape: tuple[int, int]) -> torch.Tensor:
+    H_in, W_in = in_shape
+    H_out, W_out = out_shape
+    K = intrinsics.clone()
+    off_x = int(round((W_in - W_out) / 2.0))
+    off_y = int(round((H_in - H_out) / 2.0))
+    K[:, 0, 2] -= off_x
+    K[:, 1, 2] -= off_y
+    return K
 
 def resize_images(
     images: torch.Tensor, # (B, 3, H, W)
@@ -20,12 +40,7 @@ def resize_images(
     H_out, W_out = out_shape
     new_images = TF.resize(images, out_shape, interpolation=TF.InterpolationMode.BILINEAR)
     if intrinsics is not None:
-        K = intrinsics.clone()
-        sx, sy = W_out / W_in, H_out / H_in
-        K[:, 0, 0] *= sx
-        K[:, 0, 2] *= sx
-        K[:, 1, 1] *= sy
-        K[:, 1, 2] *= sy
+        K = update_intrinsics_for_resize(intrinsics, (H_in, W_in), (H_out, W_out))
     else:
         K = None
     return new_images, K
@@ -39,11 +54,7 @@ def center_crop_images(
     H_out, W_out = out_shape
     cropped = TF.center_crop(images, out_shape)
     if intrinsics is not None:
-        K = intrinsics.clone()
-        off_x = (W_in - W_out) // 2
-        off_y = (H_in - H_out) // 2
-        K[:, 0, 2] -= off_x
-        K[:, 1, 2] -= off_y
+        K = update_intrinsics_for_crop(intrinsics, (H_in, W_in), (H_out, W_out))
     else:
         K = None
     return cropped, K

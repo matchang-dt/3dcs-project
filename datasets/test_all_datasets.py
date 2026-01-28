@@ -708,6 +708,12 @@ def main():
         help="Number of scenes to test per dataset (default: 1 to avoid OOM)"
     )
     parser.add_argument(
+        "--max_views",
+        type=int,
+        default=20,
+        help="Limit number of views per scene to save memory (default: 20)"
+    )
+    parser.add_argument(
         "--datasets",
         type=str,
         nargs="+",

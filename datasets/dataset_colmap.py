@@ -28,7 +28,7 @@ from PIL import Image
 import numpy as np
 
 from .view_sampler.view_sampler import ViewSet, ViewSampler, ViewSamplerDefault
-from .shims.crop_shim import apply_crop_shim_to_views
+from .shims.crop_shim import apply_crop_shim_to_views, update_intrinsics_for_resize, update_intrinsics_for_crop
 
 
 def read_next_bytes(fid, num_bytes, format_char_sequence, endian_character="<"):
@@ -366,17 +366,51 @@ class ColmapDataset(IterableDataset, ABC):
                     continue
                 
                 img = Image.open(img_path).convert('RGB')
-                img_tensor = TF.to_tensor(img)  # [3, H, W]
-                images.append(img_tensor)
+                W_actual, H_actual = img.size
                 
                 # Get camera intrinsics
                 camera = cameras[img_info['camera_id']]
                 fx, fy, cx, cy = camera['params']
-                K = torch.eye(3, dtype=torch.float32)
-                K[0, 0] = fx
-                K[1, 1] = fy
-                K[0, 2] = cx
-                K[1, 2] = cy
+                W_expected = camera['width']
+                H_expected = camera['height']
+                
+                # AUTO-SCALE DETECTION
+                # If images on disk are already downsampled (offline), we adjust intrinsics automatically
+                auto_scale_x = W_actual / W_expected
+                auto_scale_y = H_actual / H_expected
+
+                # Initialize intrinsics matrix (with batch dim for helper functions)
+                K = torch.eye(3, dtype=torch.float32).unsqueeze(0)  # [1, 3, 3]
+                K[:, 0, 0] = fx
+                K[:, 1, 1] = fy
+                K[:, 0, 2] = cx
+                K[:, 1, 2] = cy
+                
+                # Step 1: Apply auto-scale if images are pre-downsampled
+                if abs(auto_scale_x - 1.0) > 0.001 or abs(auto_scale_y - 1.0) > 0.001:
+                    K = update_intrinsics_for_resize(K, (H_expected, W_expected), (H_actual, W_actual))
+                
+                # Step 2: Center crop to square (maintain aspect ratio)
+                crop_size = min(H_actual, W_actual)
+                left = (W_actual - crop_size) // 2
+                top = (H_actual - crop_size) // 2
+                img = img.crop((left, top, left + crop_size, top + crop_size))
+                W_cropped, H_cropped = crop_size, crop_size
+                
+                # Adjust intrinsics for center crop
+                K = update_intrinsics_for_crop(K, (H_actual, W_actual), (H_cropped, W_cropped))
+                
+                # Step 3: Resize to target_image_size
+                H_target, W_target = self.target_image_size if isinstance(self.target_image_size, tuple) else (self.target_image_size, self.target_image_size)
+                img = img.resize((W_target, H_target), Image.LANCZOS)
+                
+                # Adjust intrinsics for resize
+                K = update_intrinsics_for_resize(K, (H_cropped, W_cropped), (H_target, W_target))
+                
+                # Remove batch dimension
+                K = K.squeeze(0)  # [3, 3]
+                img_tensor = TF.to_tensor(img)  # [3, H, W]
+                images.append(img_tensor)
                 intrinsics_list.append(K)
                 
                 # Get camera extrinsics (COLMAP is w2c)
@@ -430,7 +464,9 @@ class ColmapDataset(IterableDataset, ABC):
             if all_views is None:
                 continue
             
-            all_views = apply_crop_shim_to_views(all_views, self.target_image_size)
+            # Note: Images are already center-cropped and resized to target_image_size in load_scene()
+            # The crop_shim is not needed here since processing is done during loading
+            
             # Sample context and target views
             context_views, target_views = self.view_sampler.sample_views(
                 all_views,
