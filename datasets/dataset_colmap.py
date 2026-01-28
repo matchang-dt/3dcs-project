@@ -29,6 +29,7 @@ import numpy as np
 
 from .view_sampler.view_sampler import ViewSet, ViewSampler, ViewSamplerDefault
 from .shims.crop_shim import apply_crop_shim_to_views, update_intrinsics_for_resize, update_intrinsics_for_crop
+from .shims.norm_shim import normalize_scene
 
 
 def read_next_bytes(fid, num_bytes, format_char_sequence, endian_character="<"):
@@ -460,6 +461,9 @@ class ColmapDataset(IterableDataset, ABC):
         for scene_dir in scene_dirs:
             # Load full scene as ViewSet
             all_views = self.load_scene(scene_dir)
+            
+            # Center and normalize scene using all cameras
+            all_views, _ = normalize_scene(all_views)
             
             if all_views is None:
                 continue

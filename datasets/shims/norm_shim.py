@@ -4,7 +4,7 @@ Shim that normalizes images and intrinsics.
 
 import torch
 from typing import Literal
-
+from ..view_sampler.view_sampler import ViewSet
 
 def already_normalized(tensor: torch.Tensor, type: Literal["images", "intrinsics"]) -> bool:
     """
@@ -95,3 +95,41 @@ def denormalize_intrinsics(intrinsics: torch.Tensor, image_size: tuple[int, int]
     K[:, 1, 2] *= H  # cy
     
     return K.squeeze(0) if was_unbatched else K
+
+def normalize_scene(viewset: ViewSet, target_radius: float = 1.0) -> ViewSet:
+    """
+    Center and normalize the scene cameras to a target radius.
+    Uses max pairwise camera distance.
+    """
+    print(viewset)
+    extrinsics = viewset.extrinsics  # (V, 4, 4)
+    R_w2c = extrinsics[:, :3, :3]
+    t_w2c = extrinsics[:, :3, 3:4]
+    
+    # Extract camera positions in world coords
+    cam_positions = -torch.bmm(R_w2c.transpose(1, 2), t_w2c).squeeze(-1)  # (V, 3)
+    
+    # Compute centroid for centering
+    centroid = cam_positions.mean(dim=0)  # (3,)
+    
+    # Compute max pairwise distance (max baseline)
+    pairwise_dists = torch.cdist(cam_positions, cam_positions)  # (V, V)
+    max_baseline = pairwise_dists.max()
+    
+    # Scale so max baseline = 2 * target_radius (diameter = 2R)
+    scale = max_baseline / (2 * target_radius)
+    
+    # Handle degenerate case (all cameras at same position)
+    if scale < 1e-6:
+        scale = 1.0
+    
+    # Apply normalization to extrinsics
+    normalized_extrinsics = extrinsics.clone()
+    centroid_expanded = centroid.unsqueeze(-1).expand_as(t_w2c)
+    normalized_extrinsics[:, :3, 3:4] = (t_w2c + R_w2c @ centroid_expanded) / scale
+    
+    return ViewSet(
+        extrinsics=normalized_extrinsics,
+        intrinsics=viewset.intrinsics,
+        images=viewset.images
+    ), {'centroid': centroid, 'scale': scale, 'max_baseline': max_baseline} # supplementary

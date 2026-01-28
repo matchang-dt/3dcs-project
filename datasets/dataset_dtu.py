@@ -34,6 +34,7 @@ import numpy as np
 
 from .view_sampler.view_sampler import ViewSet, ViewSampler, ViewSamplerDefault
 from .shims.crop_shim import apply_crop_shim_to_views
+from .shims.norm_shim import normalize_scene
 
 
 @dataclass
@@ -258,6 +259,10 @@ class DTUDataset(IterableDataset):
                 continue
             
             all_views, min_near, max_far = result
+
+            # Center and normalize scene using all cameras
+            all_views, _ = normalize_scene(all_views)
+            
             all_views = apply_crop_shim_to_views(all_views, self.target_image_size)
             
             # Sample context and target views

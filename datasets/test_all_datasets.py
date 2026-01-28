@@ -611,7 +611,7 @@ def test_all_datasets(
         "acid": "/workspace/re10kvol/acid",
         "re10k": "/workspace/re10kvol/re10k",
         "mipnerf360": "/workspace/re10kvol/mipnerf360",
-        "tnt": "/workspace/re10kvol/tanks_and_temples",
+        "tnt": "/workspace/re10kvol/tnt",
         "deepblending": "/workspace/re10kvol/deepblending",
         "dtu": "/workspace/re10kvol/dtu",
     }

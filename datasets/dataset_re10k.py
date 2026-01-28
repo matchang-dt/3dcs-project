@@ -22,6 +22,7 @@ from PIL import Image
 import numpy as np
 
 from .view_sampler.view_sampler import ViewSet, ViewSampler, ViewSamplerDefault
+from .shims.norm_shim import normalize_scene
 
 # ! CAREFUL WITH THIS AND ACID DATASETS
 # target_image_size for other datasets are used to scale original images
@@ -251,6 +252,9 @@ class Re10kDataset(IterableDataset):
                 for scene_dict in scenes:
                     # Load full scene as ViewSet
                     all_views = self.load_scene(scene_dict)
+
+                    # Center and normalize scene using all cameras
+                    all_views, _ = normalize_scene(all_views)
                     
                     if all_views is None:
                         continue

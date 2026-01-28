@@ -70,7 +70,7 @@ class TanksAndTemplesDataset(ColmapDataset):
             target_image_size=target_image_size,
             max_train_steps=max_train_steps,
             view_sampler=view_sampler,
-            dataset_name="tanks_and_temples",
+            dataset_name="tnt",
         )
     
     def get_scene_list(self) -> List[Path]:
