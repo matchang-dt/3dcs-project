@@ -11,7 +11,7 @@ class ResBlock(L.LightningModule):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, 3, stride=stride, padding=1, bias=False, dtype=dtype)
         self.conv2 = nn.Conv2d(out_channels, out_channels, 3, stride=1, padding=1, bias=False, dtype=dtype)
-        self.relu = nn.ReLU()
+        self.silu = nn.SiLU()
         self.bn1 = nn.BatchNorm2d(out_channels, dtype=dtype)
         self.bn2 = nn.BatchNorm2d(out_channels, dtype=dtype)
         nn.init.kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')
@@ -29,12 +29,12 @@ class ResBlock(L.LightningModule):
     def forward(self, x):
         out = self.conv1(x)
         out = self.bn1(out)
-        out = self.relu(out)
+        out = self.silu(out)
         out = self.conv2(out)
         out = self.bn2(out)
 
         out = out + self.skip(x) # skip connection
-        out = self.relu(out)
+        out = self.silu(out)
         
         return out
 
@@ -50,7 +50,7 @@ class CNNExtractor(L.LightningModule): # [B, K, 3, H, W] -> [B, K, 128, H//4, W/
         nn.init.kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')
         nn.init.constant_(self.bn1.weight, 1)
         nn.init.constant_(self.bn1.bias, 0)
-        self.relu = nn.ReLU()
+        self.silu = nn.SiLU()
         self.res1 = ResBlock(hidden_channels1, hidden_channels1, dtype=dtype)
         self.res2 = ResBlock(hidden_channels1, hidden_channels1, dtype=dtype)
         self.res3 = ResBlock(hidden_channels1, hidden_channels1, dtype=dtype)
@@ -75,7 +75,7 @@ class CNNExtractor(L.LightningModule): # [B, K, 3, H, W] -> [B, K, 128, H//4, W/
 
         out = self.conv1(x)
         out = self.bn1(out)
-        out = self.relu(out)
+        out = self.silu(out)
         out = self.res1(out)
         out = self.res2(out)
         out = self.res3(out)
@@ -84,3 +84,10 @@ class CNNExtractor(L.LightningModule): # [B, K, 3, H, W] -> [B, K, 128, H//4, W/
         out = self.res6(out)
         out = self.proj(out)
         return out.reshape(b, k, *out.shape[-3:]) # [B, K, 128, H//4, W//4]
+
+
+if __name__ == '__main__':
+    x = torch.randn(3, 4, 3, 32, 32)
+    extractor = CNNExtractor()
+    out = extractor(x)
+    print(out.shape)
