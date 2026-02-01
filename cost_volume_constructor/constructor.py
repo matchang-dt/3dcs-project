@@ -22,7 +22,6 @@ def generate_volume_grids(h, w, max_depth, depth_steps=128):
     return volume_grids # volume_grids[i, j, k] = [u*d, v*d, d, 1]
 
 
-
 def cost_volume_construct(P_src, P_tgt, f_src, f_tgt, volume_grids, max_depth):
     # P_src: [B, K, 4, 4]
     # P_tgt: [B, K, K - 1, 4, 4]
@@ -141,25 +140,3 @@ class CostVolumeConstructor(L.LightningModule):
         cost_volumes = self.silu(cost_volumes) # [B * K, 128, H, W]
         cost_volumes = self.last_conv(cost_volumes) # [B * K, 128, H, W]
         return cost_volumes  # [B * K, 128, H, W]
-
-
-
-if __name__ == "__main__":
-    K = torch.eye(4, device=torch.device("cuda"))
-    K[0, 0] = 2
-    K[1, 1] = 2
-    cos30 = torch.cos(torch.tensor(torch.pi / 6, device=torch.device("cuda")))
-    sin30 = torch.sin(torch.tensor(torch.pi / 6, device=torch.device("cuda")))
-    R = torch.tensor([[cos30, 0, -sin30], [0, 1, 0], [sin30, 0, cos30]], device=torch.device("cuda"))
-    center = torch.tensor([0, 0, 1.0], device=torch.device("cuda"))
-    t = -R @ center - center
-    T_src = torch.tensor([[1.0, 0, 0, 0], [0, 1.0, 0, 0], [0, 0, 1.0, 0], [0, 0, 0, 1.0]], device=torch.device("cuda"))
-    T_tgt = torch.eye(4, device=torch.device("cuda"))
-    T_tgt[:3, :3] = R
-    T_tgt[:3, 3] = t
-    P_src = K @ T_src
-    P_tgt = K @ T_tgt
-
-    B = 2
-    K = 2
-    H = 128
