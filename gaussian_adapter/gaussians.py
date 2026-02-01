@@ -7,12 +7,12 @@ from math import sqrt
 
 @dataclass
 class Gaussians:
-    means: torch.Tensor # (G,3)
-    scales: torch.Tensor # (G,3)
-    covariances: torch.Tensor # (G,3,3)
-    rotations: torch.Tensor # (G,4)
-    opacities: torch.Tensor # (G,)
-    harmonics: torch.Tensor # (G,3,deg(sh)+1)
+    means: torch.Tensor # (B,G,3)
+    scales: torch.Tensor # (B,G,3)
+    covariances: torch.Tensor # (B,G,3,3)
+    rotations: torch.Tensor # (B,G,4)
+    opacities: torch.Tensor # (B,G)
+    harmonics: torch.Tensor # (B,G,3,deg(sh)+1)
 
 
 # from https://github.com/facebookresearch/pytorch3d/blob/main/pytorch3d/transforms/rotation_conversions.py
@@ -45,23 +45,23 @@ def construct_covariance_matrix(
     scale: torch.Tensor,
     quaternion: torch.Tensor
 ) -> torch.Tensor:
-    scale = scale * torch.eye(scale).expand(scale.shape[:-2], -1, -1)
+    # scale (..., 3) -> (..., 3, 3) diagonal matrix
+    scale_diag = scale.unsqueeze(-1) * torch.eye(3, device=scale.device, dtype=scale.dtype)
     rotation = quaternion_to_matrix(quaternion)
-    return rotation @ scale @ scale.T @ rotation.T
+    return rotation @ scale_diag @ scale_diag.transpose(-1, -2) @ rotation.transpose(-1, -2)
 
 
 def rotate_sh(sh: torch.Tensor, rotations: torch.Tensor) -> torch.Tensor:
     # Wigner-D, basically rotations for spherical harmonics
+    # sh: (B, G, 3, sh_dim), sh_rotations: (B, 2*deg+1, 2*deg+1)
     n = sh.shape[-1]
 
     alpha, beta, gamma = matrix_to_angles(rotations)
     rotated_sh_list = []
     for deg in range(int(sqrt(n))):
         sh_rotations = wigner_D(deg, alpha, beta, gamma).to(sh.device).to(sh.dtype)
-        sh_rotated = einsum(
-            sh_rotations,
-            sh[..., deg ** 2 : (deg + 1) ** 2],
-            "...ij, ...j -> ...i"
-        )
+        sh_slice = sh[..., deg ** 2 : (deg + 1) ** 2]
+        # (B, i, j) @ (B, G, 3, j) -> (B, G, 3, i)
+        sh_rotated = torch.einsum("...ij,...cj->...ci", sh_rotations, sh_slice)
         rotated_sh_list.append(sh_rotated)
     return torch.cat(rotated_sh_list, dim=-1)
