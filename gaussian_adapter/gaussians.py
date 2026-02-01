@@ -1,6 +1,9 @@
 import torch
 from dataclasses import dataclass
 from einops import rearrange
+from e3nn.o3 import matrix_to_angles, wigner_D
+from einops import einsum
+from math import sqrt
 
 @dataclass
 class Gaussians:
@@ -37,6 +40,7 @@ def quaternion_to_matrix(
     )
     return rearrange(o, "... (i j) -> ... i j", i=3, j=3)
 
+
 def construct_covariance_matrix(
     scale: torch.Tensor,
     quaternion: torch.Tensor
@@ -44,3 +48,20 @@ def construct_covariance_matrix(
     scale = scale * torch.eye(scale).expand(scale.shape[:-2], -1, -1)
     rotation = quaternion_to_matrix(quaternion)
     return rotation @ scale @ scale.T @ rotation.T
+
+
+def rotate_sh(sh: torch.Tensor, rotations: torch.Tensor) -> torch.Tensor:
+    # Wigner-D, basically rotations for spherical harmonics
+    n = sh.shape[-1]
+
+    alpha, beta, gamma = matrix_to_angles(rotations)
+    rotated_sh_list = []
+    for deg in range(int(sqrt(n))):
+        sh_rotations = wigner_D(deg, alpha, beta, gamma).to(sh.device).to(sh.dtype)
+        sh_rotated = einsum(
+            sh_rotations,
+            sh[..., deg ** 2 : (deg + 1) ** 2],
+            "...ij, ...j -> ...i"
+        )
+        rotated_sh_list.append(sh_rotated)
+    return torch.cat(rotated_sh_list, dim=-1)
