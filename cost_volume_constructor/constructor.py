@@ -1,11 +1,27 @@
+from math import sqrt
+
 import torch
 from torch import nn
 import lightning as L
 
-from refiner import CostVolumeRefiner
+from .refiner import CostVolumeRefiner
 
-inv_depths = torch.arange(1, 129, dtype=torch.float32)
-depths = 2 / inv_depths - 1
+def generate_volume_grids(h, w, max_depth, depth_steps=128):
+    u_grids = ((2 * torch.arange(h) + 1) / h - 1).view(h, 1).expand(h, w)
+    v_grids = ((2 * torch.arange(w) + 1) / w - 1).view(1, w).expand(h, w)
+    uv_grids = torch.stack(
+        [u_grids, v_grids, torch.ones_like(u_grids)], dim=2
+    ) # [h, w, 3]
+    inv_depths = torch.arange(1, depth_steps + 1, dtype=torch.float32)
+    depths = max_depth / inv_depths # [128]
+    volume_grids = torch.einsum('hwc,d->hwdc', uv_grids, depths) # [h, w, 128, 3]
+    volume_grids = torch.cat(
+        [volume_grids, torch.ones_like(volume_grids[:, :, :, :1])], 
+        dim=3,
+    ) # [h, w, 128, 4]
+    return volume_grids # volume_grids[i, j, k] = [u*d, v*d, d, 1]
+
+
 
 def cost_volume_construct(P_src, P_tgt, f_src, f_tgt, volume_grids, max_depth):
     # P_src: [B, K, 4, 4]
@@ -13,44 +29,50 @@ def cost_volume_construct(P_src, P_tgt, f_src, f_tgt, volume_grids, max_depth):
     # f_src: [B, K, h, w, c]
     # f_tgt: [B, K, (K - 1), h, w, c]
     # volume_grids: [h, w, d, 4]
-    b, k, _, _, _ = P_src.shape
-    h, w, _, _ = volume_grids.shape
+    b, k, _, _, = P_src.shape
+    h, w, d, _ = volume_grids.shape
+    _, _, _, _, c = f_src.shape
+    device = P_src.device
     eps = 1e-6
-    f_src = f_src.unsqueeze(-2).expand(b, k, h, w, 128, 128) # [B, K, h, w, d, c]
-    f_tgt = f_tgt.unsqueeze(-2).expand(b, k, k - 1, h, w, 128, 128) # [B, K, K - 1, h, w, d, c]
+    f_src = f_src.unsqueeze(-2).expand(b, k, h, w, d, c) # [B, K, h, w, d, c]
+    f_tgt = f_tgt.unsqueeze(-2).expand(b, k, k - 1, h, w, d, c) # [B, K, K - 1, h, w, d, c]
     P_tgt_inv = torch.linalg.inv(P_tgt) # [B, K, K - 1, 4, 4]
     P_merged = torch.einsum('bkmn,bklno->bklmo', P_src, P_tgt_inv) # [B, K, K - 1, 4, 4]
     warped = torch.einsum('bklij,hwdj->bklhwdi', P_merged, volume_grids) # [B, K, K - 1, h, w, d, 4]
     warped_uv = (warped[..., :2] / warped[..., 2:3] + 1) / 2 # [B, K, K - 1, h, w, d, 2]
-    warped_ij = warped_uv * torch.tensor([h, w], dtype=torch.float32) - 0.5 # [B, K, K - 1, h, w, d, 2]
-    warped_ij = warped_ij.round().int() # [B, K, K - 1, h, w, d, 2]
+    warped_ij = warped_uv * torch.tensor([h, w], device=device, dtype=warped_uv.dtype) - 0.5 # [B, K, K - 1, h, w, d, 2]
+    warped_ij = warped_ij.round().long() # [B, K, K - 1, h, w, d, 2]
     warped_depth = warped[..., 2:3] # [B, K, K - 1, h, w, d, 1]
-    warped_inv_depth = (max_depth / (warped_depth + eps)).round().int() # [B, K, K - 1, h, w, d, 1]
+    warped_inv_depth = (max_depth / (warped_depth + eps)).round().long() # [B, K, K - 1, h, w, d, 1]
     warped_grids = torch.cat([warped_ij, warped_inv_depth - 1], dim=-1) # [B, K, K - 1, h, w, d, 3]
-    grid_b = torch.arange(b).reshape(b, 1, 1, 1, 1, 1).expand(b, k, k - 1, h, w, 128) # [B, K, K - 1, h, w, d]
-    grid_k = torch.arange(k).reshape(1, k, 1, 1, 1, 1).expand(b, k, k - 1, h, w, 128) # [B, K, K - 1, h, w, d]
+    grid_b = torch.arange(b, device=device).reshape(b, 1, 1, 1, 1, 1).expand(b, k, k - 1, h, w, 128) # [B, K, K - 1, h, w, d]
+    grid_k = torch.arange(k, device=device).reshape(1, k, 1, 1, 1, 1).expand(b, k, k - 1, h, w, 128) # [B, K, K - 1, h, w, d]
     idx_i = warped_grids[..., 0] # [B, K, K - 1, h, w, d]
     idx_j = warped_grids[..., 1] # [B, K, K - 1, h, w, d]
     idx_d = warped_grids[..., 2] # [B, K, K - 1, h, w, d]
     mask = ((idx_i >= 0) & (idx_i < h) & (idx_j >= 0) & 
-            (idx_j < w) & (idx_d >= 0) & (idx_d < 128)) # [B, K, K - 1, h, w, d]
+            (idx_j < w) & (idx_d >= 0) & (idx_d < d)) # [B, K, K - 1, h, w, d]
     indices = (
         grid_b[mask], grid_k[mask], idx_i[mask], idx_j[mask], idx_d[mask],
     ) # ([B * K * (K - 1) * h * w * d],) * 5
     f_tgt = f_tgt[mask] # [B * K * (K - 1) * h * w * d, c]
 
-    warped_feat_values = torch.zeros(b, k, h, w, 128, 128, dtype=torch.float32)
-    warped_feat_counts = torch.zeros(b, k, h, w, 128, dtype=torch.float32)
-    warped_feat = torch.zeros(b, k, h, w, 128, 128, dtype=torch.float32)
+    warped_feat_values = torch.zeros(b, k, h, w, d, c, dtype=f_tgt.dtype, device=device)
+    warped_feat_counts = torch.zeros(b, k, h, w, d, dtype=f_tgt.dtype, device=device)
+    warped_feat = torch.zeros(b, k, h, w, d, c, dtype=f_tgt.dtype, device=device)
     warped_feat_values.index_put_(indices, f_tgt, accumulate=True) # [B, K, h, w, d, c]
-    warped_feat_counts.index_put_(indices, 1, accumulate=True) # [B, K, h, w, d]
+    warped_feat_counts.index_put_(
+        indices,
+        torch.ones((indices[0].shape[0],), dtype=warped_feat_counts.dtype, device=device),
+        accumulate=True,
+    ) # [B, K, h, w, d]
     non_zero_mask = warped_feat_counts > 0
     warped_feat[non_zero_mask] = (
         warped_feat_values[non_zero_mask] / 
         warped_feat_counts[non_zero_mask].unsqueeze(-1)
     ) # [B, K, h, w, d, c]
     cost_volume = torch.einsum('bkhwdc,bkhwdc->bkhwd', f_src, warped_feat) # [B, K, h, w, d]
-    cost_volume = cost_volume / torch.sqrt(128) # [B, K, h, w, d]
+    cost_volume = cost_volume / sqrt(c) # [B, K, h, w, d]
     return cost_volume # [B, K, h, w, d]
 
 
@@ -70,18 +92,7 @@ class CostVolumeConstructor(L.LightningModule):
         self.silu = nn.SiLU(inplace=True)
         self.last_conv = nn.Conv2d(feature_dim, feature_dim, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
         
-        u_grids = ((2 * torch.arange(h) + 1) / h - 1).view(h, 1).expand(h, w)
-        v_grids = ((2 * torch.arange(w) + 1) / w - 1).view(1, w).expand(h, w)
-        uv_grids = torch.stack(
-            [u_grids, v_grids, torch.ones_like(u_grids)], dim=2
-        ) # [h, w, 3]
-        inv_depths = torch.arange(1, 129, dtype=torch.float32)
-        depths = max_depth / inv_depths # [128]
-        volume_grids = torch.einsum('hwc,d->hwdc', uv_grids, depths) # [h, w, 128, 3]
-        volume_grids = torch.cat(
-            [volume_grids, torch.ones_like(volume_grids[:, :, :, :1])], 
-            dim=3,
-        ) # [h, w, 128, 4]
+        volume_grids = generate_volume_grids(h, w, max_depth, depth_steps=feature_dim)
         self.register_buffer('volume_grids', volume_grids)
 
     def forward(self, x, Ps):
@@ -130,4 +141,25 @@ class CostVolumeConstructor(L.LightningModule):
         cost_volumes = self.silu(cost_volumes) # [B * K, 128, H, W]
         cost_volumes = self.last_conv(cost_volumes) # [B * K, 128, H, W]
         return cost_volumes  # [B * K, 128, H, W]
-        
+
+
+
+if __name__ == "__main__":
+    K = torch.eye(4, device=torch.device("cuda"))
+    K[0, 0] = 2
+    K[1, 1] = 2
+    cos30 = torch.cos(torch.tensor(torch.pi / 6, device=torch.device("cuda")))
+    sin30 = torch.sin(torch.tensor(torch.pi / 6, device=torch.device("cuda")))
+    R = torch.tensor([[cos30, 0, -sin30], [0, 1, 0], [sin30, 0, cos30]], device=torch.device("cuda"))
+    center = torch.tensor([0, 0, 1.0], device=torch.device("cuda"))
+    t = -R @ center - center
+    T_src = torch.tensor([[1.0, 0, 0, 0], [0, 1.0, 0, 0], [0, 0, 1.0, 0], [0, 0, 0, 1.0]], device=torch.device("cuda"))
+    T_tgt = torch.eye(4, device=torch.device("cuda"))
+    T_tgt[:3, :3] = R
+    T_tgt[:3, 3] = t
+    P_src = K @ T_src
+    P_tgt = K @ T_tgt
+
+    B = 2
+    K = 2
+    H = 128

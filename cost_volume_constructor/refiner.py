@@ -27,7 +27,7 @@ class ResBlock4UNet(L.LightningModule):
         self.skip = nn.Identity()
         if in_channels != out_channels:
             self.skip = nn.Conv2d(in_channels, out_channels, 1, stride=1, padding=0, bias=False, dtype=dtype)
-            nn.init.kaiming_normal_(self.conv3.weight, mode='fan_out', nonlinearity='relu')
+            nn.init.kaiming_normal_(self.skip.weight, mode='fan_out', nonlinearity='relu')
 
     def forward(self, x):
         out = self.gn1(x)
@@ -44,7 +44,7 @@ class CostVolumeRefiner(L.LightningModule):
     def __init__(self, channels=128, feat_map_size=64, dtype=torch.float32):
         super().__init__()
         self.channels = channels
-        self.dtype = dtype
+        self.to(dtype)
         self.res_enc1_1 = ResBlock4UNet(channels * 2, channels, dtype)
         self.res_enc1_2 = ResBlock4UNet(channels, channels, dtype)
         self.down_conv1 = nn.Conv2d(channels, channels, 3, stride=2, padding=1, bias=False, dtype=dtype)
@@ -65,7 +65,6 @@ class CostVolumeRefiner(L.LightningModule):
     def forward(self, x):
         # x: [B, K, H//4, W//4, d (128*2)]
         b, k, h, w, d = x.shape
-        x.einops()
         x = x.permute(0, 1, 4, 2, 3).reshape(b * k, d, h, w) # [B, K, H//4, W//4, d] -> [B*K, d, H//4, W//4]
         # encoder
         h1 = self.res_enc1_1(x)
