@@ -44,8 +44,8 @@ def cost_volume_construct(P_src, P_tgt, f_src, f_tgt, volume_grids, max_depth):
     warped_depth = warped[..., 2:3] # [B, K, K - 1, h, w, d, 1]
     warped_inv_depth = (max_depth / (warped_depth + eps)).round().long() # [B, K, K - 1, h, w, d, 1]
     warped_grids = torch.cat([warped_ij, warped_inv_depth - 1], dim=-1) # [B, K, K - 1, h, w, d, 3]
-    grid_b = torch.arange(b, device=device).reshape(b, 1, 1, 1, 1, 1).expand(b, k, k - 1, h, w, 128) # [B, K, K - 1, h, w, d]
-    grid_k = torch.arange(k, device=device).reshape(1, k, 1, 1, 1, 1).expand(b, k, k - 1, h, w, 128) # [B, K, K - 1, h, w, d]
+    grid_b = torch.arange(b, device=device).reshape(b, 1, 1, 1, 1, 1).expand(b, k, k - 1, h, w, d) # [B, K, K - 1, h, w, d]
+    grid_k = torch.arange(k, device=device).reshape(1, k, 1, 1, 1, 1).expand(b, k, k - 1, h, w, d) # [B, K, K - 1, h, w, d]
     idx_i = warped_grids[..., 0] # [B, K, K - 1, h, w, d]
     idx_j = warped_grids[..., 1] # [B, K, K - 1, h, w, d]
     idx_d = warped_grids[..., 2] # [B, K, K - 1, h, w, d]
@@ -94,20 +94,20 @@ class CostVolumeConstructor(L.LightningModule):
         volume_grids = generate_volume_grids(h, w, max_depth, depth_steps=feature_dim)
         self.register_buffer('volume_grids', volume_grids)
 
-    def forward(self, x, Ps):
-        # x.shape  [B, K, H//4, W//4, 128]
+    def forward(self, features, Ps):
+        # features.shape  [B, K, H//4, W//4, 128]
         # Ps.shape [B, K, 4, 4]
         f_srcs = []
         f_tgts = []
         P_srcs = []
         P_tgts = []
-        b, k, h, w, _ = x.shape
+        b, k, h, w, _ = features.shape
         for i in range(b):
             for j in range(k):
-                f_src = x[i, j, :, :, :]
+                f_src = features[i, j, :, :, :]
                 P_src = Ps[i, j, :, :]
-                f_tgt1 = x[i, :j, :, :, :]
-                f_tgt2 = x[i, j + 1:, :, :, :]
+                f_tgt1 = features[i, :j, :, :, :]
+                f_tgt2 = features[i, j + 1:, :, :, :]
                 f_tgt = torch.cat([f_tgt1, f_tgt2], dim=0)
                 P_tgt1 = Ps[i, :j, :, :]
                 P_tgt2 = Ps[i, j + 1:, :, :]
@@ -128,7 +128,7 @@ class CostVolumeConstructor(L.LightningModule):
             self.volume_grids, 
             self.max_depth
         ) # [B, K, H//4, W//4, 128]
-        refine_input = torch.cat([cost_volumes, x], dim=-1) # [B, K, H//4, W//4, 256]
+        refine_input = torch.cat([cost_volumes, features], dim=-1) # [B, K, H//4, W//4, 256]
         cost_volume_residuals = self.refiner(refine_input) # [B, K, H//4, W//4, 128]
         cost_volumes = cost_volumes + cost_volume_residuals # [B, K, H//4, W//4, 128]
         cost_volumes = cost_volumes.permute(0, 1, 4, 2, 3).reshape(b * k, self.feature_dim, h, w) # [B * K, 128, H//4, W//4]
@@ -139,4 +139,5 @@ class CostVolumeConstructor(L.LightningModule):
         cost_volumes = self.gn2(cost_volumes) # [B * K, 128, H, W]
         cost_volumes = self.silu(cost_volumes) # [B * K, 128, H, W]
         cost_volumes = self.last_conv(cost_volumes) # [B * K, 128, H, W]
-        return cost_volumes  # [B * K, 128, H, W]
+        cost_volumes = cost_volumes.reshape(b, k, self.feature_dim, h*4, w*4).permute(0, 1, 3, 4, 2) # [B, K, H, W, 128]
+        return cost_volumes # [B, K, H, W, 128]
