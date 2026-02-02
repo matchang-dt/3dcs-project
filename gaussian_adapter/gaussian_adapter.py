@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from einops import einsum
 from typing import Tuple
+from ..utils.projection import to_homogeneous, get_camera_rays_world
 
 
 @dataclass
@@ -16,50 +17,6 @@ class GaussianAdapterCfg:
     gaussians_per_pixel: int = 1
     num_surfaces: int = 1
 
-def to_homogeneous(points: torch.Tensor, at_infinity: bool = False) -> torch.Tensor:
-    # to xyzw homogeneous coordinates
-    concat_array = torch.ones_like(points[..., :1]) # w=1
-    if at_infinity: # used for vectors
-        concat_array = torch.zeros_like(concat_array) # w=0
-    return torch.cat([points, concat_array], dim=-1)
-
-# maybe move this to a separate file
-def get_camera_rays_world(
-    pixel_centers: torch.Tensor,
-    extrinsics: torch.Tensor,
-    intrinsics: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Get rays extending from camera center to pixel centers, in *world space*.
-
-    Input:
-    - pixel_centers: (B, V, R, srf, gpp, 2)
-    - extrinsics: (B, V, 1, 1, 1, 4, 4)
-    - intrinsics: (B, V, 1, 1, 1, 3, 3)
-
-    Output:
-    - ray_o: (B, V, R, srf, gpp, 3)
-    - ray_d: (B, V, R, srf, gpp, 3)
-    """
-    # 'ray trace': (B, 3, 3) @ (B, G, 3) -> (B, G, 3)
-    hom_pixel_centers = to_homogeneous(pixel_centers)
-    ray_d = einsum(
-        torch.linalg.inv(intrinsics),
-        hom_pixel_centers,
-        "... i j, ... j -> ... i"
-    )
-    ray_d = F.normalize(ray_d, dim=-1)
-    # (B, 4, 4) @ (B, G, 4) -> (B, G, 4)
-    ray_d = einsum(
-        extrinsics,
-        to_homogeneous(ray_d, at_infinity=True),
-        "... i j, ... j -> ... i"
-    )
-    ray_d = ray_d[..., :-1] # dehomogenize
-
-    # ray origins: (B, V, 1, 1, 1, 3) -> (B, V, R, srf, gpp, 3)
-    ray_o = extrinsics[..., :-1, -1].expand_as(ray_d)
-    return ray_o, ray_d
 
 class GaussianAdapter(torch.nn.Module):
     def __init__(self, cfg: GaussianAdapterCfg):
@@ -76,6 +33,7 @@ class GaussianAdapter(torch.nn.Module):
         opacities: torch.Tensor, # orig. (B,V,rays,1,1), no change
         depths: torch.Tensor, # orig. (B,V,rays,1,1), no change
     ): # returns all the arguments, reshaped for broadcast operations
+        # having this makes 'forward' logic much more interpretable without worrying about shapes
         srf = self.cfg.num_surfaces
         gpp = self.cfg.gaussians_per_pixel
         pre_gaussians = pre_gaussians[..., None, :].expand(-1, -1, -1, srf, gpp, -1)
@@ -102,10 +60,10 @@ class GaussianAdapter(torch.nn.Module):
         Input (pre-set to broadcast-compatible shapes):
         - pre_gaussians: (batch_dim(B), views(V), num_rays(R=H*W), num_surfaces(srf), gaussians_per_pixel(gpp), c)
         - pixel_centers: (B, V, R, srf, gpp, 2)
-        - extrinsics: (B, V, 1, 1, 1, 4, 4)
-        - intrinsics: (B, V, 1, 1, 1, 3, 3)
-        - opacities: (B, V, R, srf, gpp, spp)
-        - depths: (B, V, R, srf, gpp, spp)
+        - extrinsics: (B, V, 4, 4)
+        - intrinsics: (B, V, 3, 3)
+        - opacities: (B, V, rays, srf, gpp)
+        - depths: (B, V, rays, srf, gpp)
         - img_shape: (H, W)
 
         Output: Gaussians(means, covariances, rotations, opacities, harmonics)

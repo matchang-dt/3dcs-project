@@ -21,6 +21,7 @@ class DatasetCfg:
     num_target_views: int = 4
     target_image_size: int = 256  # target image size
     max_train_steps: int = 300000  # For baseline expansion
+    background_color: tuple[float, float, float] = (0.0, 0.0, 0.0)  # RGB for renderer
 
 
 # Registry of available datasets
