@@ -13,7 +13,8 @@ def depth_estimate(cost_volume, max_depth):
     depth_invs = torch.arange(d, device=cost_volume.device) + 1
     depths = (max_depth / depth_invs).reshape(1, 1, 1, 1, d).expand(b, k, H, W, d) # [B, K, H, W, d (128)]
     depth_map = torch.einsum('bkHWd,bkHWd->bkHW', depth_prob, depths) # [B, K, H, W]
-    return depth_map # [B, K, H, W]
+    depth_conf = torch.max(depth_prob, dim=-1)[0]
+    return depth_map, depth_conf # [B, K, H, W], [B, K, H, W] (for gaussian mean, opacity)
 
 
 class DepthEstimator(L.LightningModule):
@@ -31,11 +32,11 @@ class DepthEstimator(L.LightningModule):
         images = images.reshape(-1, 3, H, W) # [B*K, 3, H, W]
         features = features.reshape(-1, H//4, W//4, d).permute(0, 3, 1, 2) # [B*K, 128, H//4, W//4]
         features = F.interpolate(features, size=(H, W), mode='bilinear', align_corners=False) # [B*K, 128, H, W]
-        depth_map = depth_estimate(cost_volume, self.max_depth) # [B, K, H, W]
+        depth_map, depth_conf = depth_estimate(cost_volume, self.max_depth) # [B, K, H, W], [B, K, H, W, d (128)]
         depth_map_usq = depth_map.reshape(-1, H, W).unsqueeze(1) # [B*K, 1, H, W]
         
         refine_inputs = torch.cat([images, features, depth_map_usq], dim=1) # [B*K, 128+4, H, W]
         refine_inputs = refine_inputs.permute(0, 2, 3, 1).reshape(b, k, H, W, d+4) # [B*K, H, W, 128+4]
         depth_residual = self.refiner(refine_inputs) # [B, K, H, W]
         depth_map += depth_residual # [B, K, H, W]
-        return depth_map # [B, K, H, W]
+        return depth_map, depth_conf # [B, K, H, W], [B, K, H, W]
