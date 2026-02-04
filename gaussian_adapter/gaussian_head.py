@@ -2,20 +2,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
+from gaussian_adapter.gaussian_adapter import GaussianAdapterCfg, GaussianAdapter
 
 
 @dataclass
 class GaussianHeadConfig:
-    input_dim: int
-    opacity_head_channels: int # for density >> opacity
-    transf_head_channels: int  # for covariance, color info
-    opacity_t: float # tuner for opacity mapping
-    sh_degree: int   # spherical harmonics degree
-    scale_min: float = 0.01
-    scale_max: float = 100.
-    num_surfaces: int  = 1 # NOTE: currently only works with '1'
-    gaussians_per_pixel: int = 1 # NOTE: currently only works with '1'
-    gaussian_scale_pct: int = 1
+    channels: int # for density >> opacity
+    opacity_start: float # start of training exponent
+    opacity_end: float # end exponent
+    opacity_warmup: float # how many steps to warmup
+    gaussian_adapter_config: GaussianAdapterCfg
 
 
 class GaussianHead(nn.Module):
@@ -24,42 +20,83 @@ class GaussianHead(nn.Module):
     """
     def __init__(self, cfg: GaussianHeadConfig):
         super().__init__(cfg)
-        # head for rotation (quaternion rep.), scales, sh coefficients 
-        # num params here are num_surfaces * (d_in * 2) -> 84(xy,scales=3,quat=4,sh=[sh_deg=4 + 1] ** 2 * 3)
-        # IN: exact the same as the depthest out dim channels
-        self.sh_dim = (self.cfg.sh_degree + 1) ** 2
+        self.cfg = cfg
+        # head for xy offsets, rotation (quaternion rep.), scales, sh coefficients 
+        # [xy-offset(2), scales(3), rotation(4), sh(3*sh_dim)]
+        self.sh_dim = (self.cfg.gaussian_adapter_config.sh_degree + 1) ** 2
         channels = self.cfg.channels
+        out_channels = 2 + 3 + 4 + 3 * self.sh_dim  # xy-offset + scales + rotation + sh
         self.head = nn.Sequential(
-            nn.Conv2d(channels, channels * 2, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(channels, channels * 2, kernel_size=3, stride=1, padding=1),  # input: channels=UNet features, RGB, upsampled features (from cnn + tf)
             nn.GELU(),
-            nn.Conv2d(channels * 2, channels, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(channels * 2, out_channels, kernel_size=3, stride=1, padding=1),
         )
+        self.adapter = GaussianAdapter(self.cfg.gaussian_adapter_config)
 
-    def _map_conf_to_opacity(self, depth_conf):
-        # depth_conf: [B, V, H, W] (post softmax->max along depth channels)
-        # out: [B, V, H, W]
-        t = self.cfg.opacity_t # some config value
-        return 1/2 * (1 - (1 - depth_conf) ** t + depth_conf ** (1/t))
+    def _map_conf_to_opacity(self, depth_conf, global_step=0):
+        # depth_conf: [B, V, H, W] (already softmaxed->max along depth channels)
+        # apparently, global step is used for curriculum learning for training stability
+        # opacities: [B, V, H, W]
+        power = self.cfg.opacity_start + min(global_step / self.cfg.opacity_warmup, 1) * (self.cfg.opacity_end - self.cfg.opacity_start)
+        exp = 2 ** power
+        opacities = 1/2 * (1 - (1 - depth_conf) ** exp + depth_conf ** (1/exp))
+        return opacities
 
-    def _unproject_depth_to_points(self, depth_map, scales):
+    def _get_pixel_centers(self, img_shape):
+        """Get center pixel normalized coordinates for each pixel in the image."""
+        H, W = img_shape
+        # Create normalized pixel coordinates [0, 1]
+        centers_y = torch.linspace(0.5 / H, 1 - 0.5 / H, H)
+        centers_x = torch.linspace(0.5 / W, 1 - 0.5 / W, W)
+        grid_y, grid_x = torch.meshgrid(centers_y, centers_x, indexing='ij')
+        centers = torch.stack([grid_x, grid_y], dim=-1)  # [H, W, 2]
+        return centers
+
+
+    def forward(self, depth_map, depth_conf, images, extrinsics, intrinsics, global_step=0):
         # depth_map: [B, V, H, W]
-        # output: gaussian means (3D points) based on depth
-        pass
-
-    def forward(self, depth_map, depth_conf, images, extrinsics, intrinsics): # input to this should be the depth maps, conf maps, images, upsampled features
-        # depth_map: [B, V, H, W]
-        # depth_: [B, V, H, W]
+        # depth_conf: [B, V, H, W]
         # images: [B, V, 3, H, W]
-        # features: [B, V, H//4, W//4, 128]
-        # these should be concat along V
-        # depth_* come from the depth estimator post-refinement
-        opacities = self._map_conf_to_opacity(depth_conf)
-        pre_gaussians = self.head(depth_map)
-        scales, quaterinons, sh_coefs = torch.split(pre_gaussians, (3,4,3 * self.sh_dim), dim=-1)
-        quaterinons = F.normalize(quaterinons, dim=-1)
-
-        means = self._unproject_depth_to_points(depth_map, scales)
-        return means, opacities, scales, quaterinons, sh_coefs
+        # extrinsics: [B, V, 4, 4]
+        # intrinsics: [B, V, 3, 3]
+        B, V, H, W = depth_map.shape
+        device = depth_map.device
+        
+        # Map confidence to opacity
+        opacities = self._map_conf_to_opacity(depth_conf, global_step)
+        
+        # Predict gaussian params
+        depth_map_flat = depth_map.view(B * V, 1, H, W)
+        ghead_input = torch.cat([depth_map_flat, images, ])
+        pre_gaussians = self.head(depth_map_flat)  # [B*V, C, H, W]
+        pre_gaussians = pre_gaussians.permute(0, 2, 3, 1)  # [B*V, H, W, C]
+        pre_gaussians = pre_gaussians.view(B, V, H, W, -1)  # [B, V, H, W, C]
+        
+        # Get pixel centers and offsets for subpixel preds
+        pixel_centers = self._get_pixel_centers(img_shape=(H, W)).to(device)  # [H, W, 2]
+        pixel_centers = pixel_centers.unsqueeze(0).unsqueeze(0).expand(B, V, -1, -1, -1)  # [B, V, H, W, 2]
+        xy_offsets = torch.sigmoid(pre_gaussians[..., :2]) - 0.5  # [-0.5, 0.5]
+        pixel_size = torch.tensor([1.0 / W, 1.0 / H], device=device)
+        pixel_centers = pixel_centers + xy_offsets * pixel_size
+        
+        # Flatten spatial dimensions and add srf dimension for adapter
+        rays = H * W
+        srf = self.cfg.gaussian_adapter_config.num_surfaces  # num_surfaces
+        pre_gaussians_flat = pre_gaussians[..., 2:].reshape(B, V, rays, srf, -1) # [B, V, rays, srf, C-2]
+        pixel_centers_flat = pixel_centers.reshape(B, V, rays, srf, 2)  # [B, V, rays, srf, 2]
+        opacities_flat = opacities.reshape(B, V, rays)  # [B, V, rays]
+        depths_flat = depth_map.reshape(B, V, rays)  # [B, V, rays]
+        
+        gaussians = self.adapter(
+            pre_gaussians=pre_gaussians_flat,
+            pixel_centers=pixel_centers_flat,
+            extrinsics=extrinsics,
+            intrinsics=intrinsics,
+            opacities=opacities_flat,
+            depths=depths_flat,
+            img_shape=(H, W),
+        )
+        return gaussians
 
 # unproject depth to get 3D points (use as means)
 

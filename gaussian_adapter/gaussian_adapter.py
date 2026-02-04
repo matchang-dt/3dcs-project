@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from einops import einsum
 from typing import Tuple
-from ..utils.projection import to_homogeneous, get_camera_rays_world
+from utils.projection import to_homogeneous, get_camera_rays_world
 
 
 @dataclass
@@ -36,6 +36,7 @@ class GaussianAdapter(torch.nn.Module):
         # having this makes 'forward' logic much more interpretable without worrying about shapes
         srf = self.cfg.num_surfaces
         gpp = self.cfg.gaussians_per_pixel
+        print(pre_gaussians.shape)
         pre_gaussians = pre_gaussians[..., None, :].expand(-1, -1, -1, srf, gpp, -1)
         pixel_centers = pixel_centers[..., None, :].expand(-1, -1, -1, srf, gpp, -1)
         extrinsics = extrinsics[:, :, None, None, None, :, :].expand(-1, -1, -1, srf, gpp, -1, -1)

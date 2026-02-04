@@ -68,3 +68,56 @@ def get_projection_matrix(
     result[:, 2, 2] = far / (far - near)
     result[:, 2, 3] = -(far * near) / (far - near)
     return result
+
+
+def get_camera_rays_world(
+    pixel_centers: torch.Tensor,
+    extrinsics: torch.Tensor,
+    intrinsics: torch.Tensor,
+    image_shape: tuple[int, int],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Convert pixel centers to world-space rays.
+    
+    Args:
+        pixel_centers: (..., 2) - normalized pixel coordinates [0, 1]
+        extrinsics: (..., 4, 4) - camera extrinsics (world-to-camera transform)
+        intrinsics: (..., 3, 3) - normalized camera intrinsics
+    
+    Returns:
+        ray_o: (..., 3) - ray origins in world space
+        ray_d: (..., 3) - ray directions in world space (normalized)
+    """
+    H, W = image_shape
+    # Extract camera position from extrinsics (inverse transform)
+    # Camera position in world space is -R^T @ t
+    R_w2c = extrinsics[..., :3, :3]
+    t_w2c = extrinsics[..., :3, 3:4]
+    R_c2w = R_w2c.transpose(-1, -2)
+    ray_o = R_c2w[..., 3:4, :3] # simply t in c2w (should be same shape as ray_d)
+    
+    # Convert normalized pixel coordinates to camera space rays
+    # pixel_centers are in [0, 1], need to convert to pixel coordinates
+    # Then unproject using intrinsics
+    fx = intrinsics[..., 0, 0:1]
+    fy = intrinsics[..., 1, 1:2]
+    cx = intrinsics[..., 0, 2:3]
+    cy = intrinsics[..., 1, 2:3]
+    
+    x = pixel_centers[..., 0:1] * W
+    y = pixel_centers[..., 1:2] * H
+    
+    # Unproject to camera space
+    x_cam = (x - cx) / fx
+    y_cam = (y - cy) / fy
+    z_cam = torch.ones_like(x_cam)
+    
+    # homogenize + normalize
+    ray_d_cam = torch.cat([x_cam, y_cam, z_cam], dim=-1)
+    ray_d_cam = ray_d_cam / ray_d_cam.norm(dim=-1, keepdim=True)
+    
+    # Transform ray direction to world space
+    ray_d = torch.matmul(R_c2w, ray_d_cam.unsqueeze(-1)).squeeze(-1)
+    ray_d = ray_d / ray_d.norm(dim=-1, keepdim=True) # ensure unit length
+    
+    return ray_o, ray_d
