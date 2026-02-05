@@ -1,0 +1,2 @@
+# /decoder
+NOTE: this part uses diff-gaussian-rasterization (Inria original: https://github.com/graphdeco-inria/diff-gaussian-rasterization) variant from https://github.com/dcharatan/diff-gaussian-rasterization-modified and is heavily inspired from the interface in MVSplat's original implementation to work the same way in rendering images and depth maps.
