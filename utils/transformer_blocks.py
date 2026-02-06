@@ -1,71 +1,10 @@
 import lightning as L
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Optional
+
+from .transformer_functional import window_partition, window_reverse, make_attn_mask
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-def window_partition(x, window_size):
-    # x: (n, h, w, c)
-    if x.ndim == 4:
-        n, h, w, c = x.shape
-        x = x.view(
-            n,
-            h // window_size, window_size,
-            w // window_size, window_size,
-            c
-        )
-        windows = x.permute(0, 1, 3, 2, 4, 5).contiguous() # [n, window_num_h, window_num_w, window_size, window_size, c]
-        return windows.view(-1, window_size * window_size, c) # [n * window_num, window_size**2, c]
-    else:
-    # x: (n, k, h, w, c)
-        n, k, h, w, c = x.shape
-        x = x.view(
-            n, k,
-            h // window_size, window_size,
-            w // window_size, window_size,
-            c
-        )
-        windows = x.permute(0, 2, 4, 1, 3, 5, 6).contiguous() # [n, window_num_h, window_num_w, k, window_size, window_size, c]
-        return windows.view(-1, k * window_size * window_size, c) # [n * window_num, k * window_size**2, c]
-
-
-def window_reverse(windows, window_size, h, w): ### to check
-    # windows: (b * window_num, window_size**2, c)
-    b = int(windows.shape[0] / (h * w / window_size / window_size))
-    x = windows.view(
-        b,
-        h // window_size, # window_num_h
-        w // window_size, # window_num_w
-        window_size,
-        window_size,
-        -1, # c
-    )
-    x = x.permute(0, 1, 3, 2, 4, 5).contiguous()
-    return x.view(b, h, w, -1) # [b, h, w, c]
-
-
-
-def make_attn_mask(h, w, window_size, shift_size, device):
-    img_mask = torch.zeros((1, h, w, 1), device=device)
-    cnt = 0
-    h_slices = (
-        slice(0, -window_size),
-        slice(-window_size, -shift_size),
-        slice(-shift_size, None),
-    )
-    w_slices = h_slices
-    for h_slice in h_slices:
-        for w_slice in w_slices:
-            img_mask[:, h_slice, w_slice, :] = cnt
-            cnt += 1
-
-    mask_windows = window_partition(img_mask, window_size) # [1, window_num_h, window_num_w, window_size * window_size, 1]
-    mask_windows = mask_windows.view(-1, window_size * window_size) # [window_num, window_size**2]
-    attn_mask = mask_windows[:, None, :] - mask_windows[:, :, None] # [window_num, window_size**2, window_size**2]
-    attn_mask = attn_mask.masked_fill(attn_mask != 0, float("-inf")) # [window_num, window_size**2, window_size**2]
-    return attn_mask # [window_num, window_size**2, window_size**2]
 
 
 class WindowSelfAttention(L.LightningModule):
@@ -83,7 +22,7 @@ class WindowSelfAttention(L.LightningModule):
 
         # relative position bias
         size = (2 * window_size - 1) ** 2
-        self.rel_pos = nn.Parameter(torch.zeros(size, num_heads, dtype=dtype)) #[window_size*2 - 1)**2, num_heads]
+        self.rel_pos = nn.Parameter(torch.zeros(size, num_heads, dtype=dtype)) #[(window_size*2 - 1)**2, num_heads]
 
         coords = torch.arange(window_size)
         coords = torch.stack(torch.meshgrid(coords, coords, indexing="ij"))
