@@ -2,7 +2,7 @@ import lightning as L
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .transformer_layer import SwinCrossBlock
+from utils import SwinCrossBlock
 
 
 class TransformerExtractor(L.LightningModule):

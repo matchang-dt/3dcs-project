@@ -6,6 +6,7 @@ import lightning as L
 
 from .refiner import CostVolumeRefiner
 
+
 def generate_volume_grids(h, w, max_depth, depth_steps=128):
     u_grids = ((2 * torch.arange(h) + 1) / h - 1).view(h, 1).expand(h, w)
     v_grids = ((2 * torch.arange(w) + 1) / w - 1).view(1, w).expand(h, w)
