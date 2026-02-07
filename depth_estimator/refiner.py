@@ -6,7 +6,19 @@ from utils import WindowSelfAttention, WindowCrossAttention, ResBlock4UNet, patc
 
 
 class DepthRefiner(L.LightningModule):
+    """
+    Depth refiner module.
+    Refines the depth map with the features and the images by a U-net based refiner.
+    U-Net of 4 stages, transformer blocks in the bottleneck.
+    """
     def __init__(self, channels=128, feat_map_size=256, dtype=torch.float32):
+        """
+        Initialize the DepthRefiner.
+        Args:
+            channels (int): number of channels for the features
+            feat_map_size (int): size of the feature map
+            dtype (torch.dtype): data type
+        """
         assert feat_map_size % 16 == 0
         super().__init__()
         self.to(dtype)
@@ -56,6 +68,13 @@ class DepthRefiner(L.LightningModule):
         nn.init.constant_(self.last_conv.bias, 0)
 
     def forward(self, x):
+        """
+        Forward pass of the DepthRefiner.
+        Args:
+            x (torch.Tensor): input tensor of shape [B, K, H, W, d (128 + 4)] 128: upsampled features, 3: images, 1: depth map
+        Returns:
+            out (torch.Tensor): output tensor of shape [B, K, H, W]
+        """
         # x: [B, K, H, W, d (128 + 4)]
         b, k, H, W, d = x.shape
         assert d == self.channels + 4

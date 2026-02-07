@@ -6,9 +6,22 @@ from .transformer_functional import window_partition, window_reverse, make_attn_
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
 class WindowSelfAttention(L.LightningModule):
+    """
+    Window-based self-attention.
+    Using relative position bias (encoding), it is normal for SwinTransformer.
+    It works as a normal self-attention block if the window size is the same as the input,
+    except the positional encoding is relative.
+    """
     def __init__(self, dim, window_size, num_heads=1, dtype=torch.float32):
+        """
+        Initialize the WindowSelfAttention.
+        Args:
+            dim (int): number of input channels
+            window_size (int): size of the window
+            num_heads (int): number of attention heads
+            dtype (torch.dtype): data type
+        """
         super().__init__()
         self.to(dtype)
         self.dim = dim
@@ -36,6 +49,14 @@ class WindowSelfAttention(L.LightningModule):
         self.register_buffer("rel_index", rel.sum(-1)) # [window_size**2, window_size**2]
 
     def forward(self, x, mask=None):
+        """
+        Forward pass of the WindowSelfAttention.
+        Args:
+            x (torch.Tensor): input tensor of shape [B*K*nW, window_size**2, 128]
+            mask (torch.Tensor): mask tensor of shape [nW, window_size**2, window_size**2]
+        Returns:
+            out (torch.Tensor): output tensor of shape [B*K*nW, window_size**2, 128]
+        """
         # x: [B*K*nW, window_size**2, 128]
         b, n, c = x.shape # b = B * nW, n = window_size**2
         qkv = self.qkv(x).reshape(b, n, 3, self.num_heads, c // self.num_heads) # [B * nW, n, 3, num_heads, head_dim]
@@ -61,7 +82,21 @@ class WindowSelfAttention(L.LightningModule):
 
 
 class WindowCrossAttention(L.LightningModule):
+    """
+    Window-based cross-attention.
+    Using relative position bias (encoding), it is normal for SwinTransformer.
+    It works as a normal cross-attention block if the window size is the same as the input,
+    except the positional encoding is relative.
+    """
     def __init__(self, dim, window_size, num_heads=1, dtype=torch.float32):
+        """
+        Initialize the WindowCrossAttention.
+        Args:
+            dim (int): number of input channels
+            window_size (int): size of the window
+            num_heads (int): number of attention heads
+            dtype (torch.dtype): data type
+        """
         super().__init__()
         self.to(dtype)
         self.dim = dim
@@ -90,6 +125,15 @@ class WindowCrossAttention(L.LightningModule):
         self.register_buffer("rel_index", rel.sum(-1)) # [window_size**2, window_size**2]
 
     def forward(self, x_q, x_kv, mask=None):
+        """
+        Forward pass of the WindowCrossAttention.
+        Args:
+            x_q (torch.Tensor): input source tensor of shape [B*K*nW, window_size**2, 128]
+            x_kv (torch.Tensor): input target tensor of shape [B*K*nW, (K-1)*window_size**2, 128]
+            mask (torch.Tensor): mask tensor of shape [nW, window_size**2, window_size**2]
+        Returns:
+            out (torch.Tensor): output tensor of shape [B*K*nW, window_size**2, 128]
+        """
         # x_q: [B*K*nW, window_size**2, 128], x_kv: [B*K*nW, (K-1)*window_size**2, 128]
         b, n, c = x_q.shape # b = B * nW, n = window_size**2
         k = x_kv.shape[1] // n # k = K-1
@@ -119,8 +163,23 @@ class WindowCrossAttention(L.LightningModule):
 
 
 class SwinCrossBlock(L.LightningModule):
+    """
+    SwinTransformer block with window-based self-attention and cross-attention.
+    This is used in the feature extractor module.
+    """
     def __init__(self, dim=128, num_heads=1, window_size=32, shift_size=16, dtype=torch.float32):
+        """
+        Initialize the SwinCrossBlock.
+        The layer order is: self_attn->cross_attn->ffn + skip connection
+        Args:
+            dim (int): number of input channels
+            num_heads (int): number of attention heads
+            window_size (int): size of the window, basically the half of the image size
+            shift_size (int): size of the shift, basically the half of the window size
+            dtype (torch.dtype): data type
+        """
         super().__init__()
+        self.to(dtype)
         self.window_size = window_size
         self.shift_size = shift_size
 
@@ -140,6 +199,14 @@ class SwinCrossBlock(L.LightningModule):
         self.attn_mask = None
 
     def forward(self, x, x_kv):
+        """
+        Forward pass of the SwinCrossBlock.
+        Args:
+            x (torch.Tensor): input tensor of shape [B*K, H//4, W//4, 128]
+            x_kv (torch.Tensor): input tensor of shape [B*K, K-1, H//4, W//4, 128]
+        Returns:
+            out (torch.Tensor): output tensor of shape [B*K, H//4, W//4, 128]
+        """
         # x: (B*K, H//4, W//4, 128), x_kv: (B*K, K-1, H//4, W//4, 128)
         b, h, w, c = x.shape
 

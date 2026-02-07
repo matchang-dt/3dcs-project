@@ -7,7 +7,18 @@ from utils import ResBlock4Extractor
 
         
 class CNNExtractor(L.LightningModule): # [B, K, 3, H, W] -> [B, K, 128, H//4, W//4]
+    """
+    CNN extractor module for the feature extractor.
+    The layer order is: conv1->bn1->silu->resblocks*6->proj
+    The number of input channels is fixed to 3.
+    """
     def __init__(self, out_channels=128, dtype=torch.float32):
+        """
+        Initialize the CNNExtractor.
+        Args:
+            out_channels (int): number of output channels
+            dtype (torch.dtype): data type
+        """
         super().__init__()
         self.to(dtype)
         hidden_channels1 = out_channels // 4
@@ -32,6 +43,13 @@ class CNNExtractor(L.LightningModule): # [B, K, 3, H, W] -> [B, K, 128, H//4, W/
         nn.init.constant_(self.proj.bias, 0)
 
     def forward(self, x):
+        """
+        Forward pass of the CNNExtractor.
+        Args:
+            x (torch.Tensor): input tensor of shape [B, K, 3, H, W]
+        Returns:
+            out (torch.Tensor): output tensor of shape [B, K, 128, H//4, W//4]
+        """
         # x: [B, K, 3, H, W] 
         if x.dim() == 4:
             b = 1
