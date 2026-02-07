@@ -36,7 +36,6 @@ class GaussianAdapter(torch.nn.Module):
         # having this makes 'forward' logic much more interpretable without worrying about shapes
         srf = self.cfg.num_surfaces
         gpp = self.cfg.gaussians_per_pixel
-        print(pre_gaussians.shape)
         pre_gaussians = pre_gaussians[..., None, :].expand(-1, -1, -1, srf, gpp, -1)
         pixel_centers = pixel_centers[..., None, :].expand(-1, -1, -1, srf, gpp, -1)
         extrinsics = extrinsics[:, :, None, None, None, :, :].expand(-1, -1, -1, srf, gpp, -1, -1)
@@ -107,7 +106,7 @@ class GaussianAdapter(torch.nn.Module):
         # covariances: (B,V,R,srf,gpp,3,3)
 
         # gaussian means from 'ray tracing'/unprojecting based on depth
-        ray_o, ray_d = get_camera_rays_world(pixel_centers, extrinsics, intrinsics)
+        ray_o, ray_d = get_camera_rays_world(pixel_centers, extrinsics, intrinsics, img_shape)
         means = ray_o + ray_d * depths.unsqueeze(-1)
         # ray_o, ray_d: (B,V,R,srf,gpp,3)
         # means: (B,V,R,srf,gpp,3)

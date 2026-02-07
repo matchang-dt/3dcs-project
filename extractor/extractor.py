@@ -24,7 +24,7 @@ def patchify(x: torch.Tensor) -> torch.Tensor:
 class Extractor(L.LightningModule):
     def __init__(
         self, image_size=256, hidden_dim=128, swin_divisions=2, 
-        cnn_dtype=torch.float32, transformer_dtype=torch.bfloat16
+        cnn_dtype=torch.float32, transformer_dtype=torch.float32
     ):
         super().__init__()
         self.dim = hidden_dim

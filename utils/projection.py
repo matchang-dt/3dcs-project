@@ -89,12 +89,11 @@ def get_camera_rays_world(
         ray_d: (..., 3) - ray directions in world space (normalized)
     """
     H, W = image_shape
-    # Extract camera position from extrinsics (inverse transform)
-    # Camera position in world space is -R^T @ t
-    R_w2c = extrinsics[..., :3, :3]
-    t_w2c = extrinsics[..., :3, 3:4]
-    R_c2w = R_w2c.transpose(-1, -2)
-    ray_o = R_c2w[..., 3:4, :3] # simply t in c2w (should be same shape as ray_d)
+    # Extrinsics are W2C (world-to-camera). C2W = inv(extrinsics) has camera center in 4th column [:3, 3].
+    # Algebraically: C_world = -R_c2w @ t_w2c (from 0 = R_w2c @ C + t_w2c => C = -R_w2c^{-1} @ t_w2c).
+    c2w = torch.linalg.inv(extrinsics)
+    ray_o = c2w[..., :3, 3]  # (..., 3) camera position in world = C2W translation
+    R_c2w = c2w[..., :3, :3]
     
     # Convert normalized pixel coordinates to camera space rays
     # pixel_centers are in [0, 1], need to convert to pixel coordinates

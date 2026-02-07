@@ -35,13 +35,17 @@ class DecoderGaussianSplattingCUDA(Decoder[DecoderGaussianSplattingCUDACfg]):
         depth_mode: DepthRenderingMode | None = None,
     ):
         B, V = extrinsics.shape[:2]
+        
+        # Ensure background color is float32 for rasterizer
+        bg_color = self.background_color.to(device=extrinsics.device, dtype=torch.float32)
+        
         color = render_gaussians_cuda(
             rearrange(extrinsics, "b v i j -> (b v) i j"),
             rearrange(intrinsics, "b v i j -> (b v) i j"),
             rearrange(near, "b v -> (b v)"),
             rearrange(far, "b v -> (b v)"),
             image_shape,
-            repeat(self.background_color.to(extrinsics.device), "c -> (b v) c", b=B, v=V),
+            repeat(bg_color, "c -> (b v) c", b=B, v=V),
             repeat(gaussians.means, "b g xyz -> (b v) g xyz", v=V),
             repeat(gaussians.covariances, "b g i j -> (b v) g i j", v=V),
             repeat(gaussians.harmonics, "b g c d_sh -> (b v) g c d_sh", v=V),

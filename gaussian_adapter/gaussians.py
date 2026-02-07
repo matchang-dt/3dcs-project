@@ -56,10 +56,21 @@ def rotate_sh(sh: torch.Tensor, rotations: torch.Tensor) -> torch.Tensor:
     # sh: (B, G, 3, sh_dim), sh_rotations: (B, 2*deg+1, 2*deg+1)
     n = sh.shape[-1]
 
-    alpha, beta, gamma = matrix_to_angles(rotations)
+    # e3nn's wigner_D uses cached X matrices on CPU, so we need to compute on CPU then move to GPU
+    # need to look at this later
+    original_device = sh.device
+    original_dtype = sh.dtype
+    
+    # Move to CPU for e3nn computation (which requires float32)
+    rotations_cpu = rotations.cpu().to(torch.float32)
+    alpha, beta, gamma = matrix_to_angles(rotations_cpu)
+    
     rotated_sh_list = []
     for deg in range(int(sqrt(n))):
-        sh_rotations = wigner_D(deg, alpha, beta, gamma).to(sh.device).to(sh.dtype)
+        # Compute wigner_D on CPU (where cached X matrices are)
+        sh_rotations = wigner_D(deg, alpha.contiguous(), beta.contiguous(), gamma.contiguous())
+        # Move back to original device and dtype
+        sh_rotations = sh_rotations.to(device=original_device, dtype=original_dtype)
         sh_slice = sh[..., deg ** 2 : (deg + 1) ** 2]
         # (B, i, j) @ (B, G, 3, j) -> (B, G, 3, i)
         sh_rotated = torch.einsum("...ij,...cj->...ci", sh_rotations, sh_slice)

@@ -204,10 +204,12 @@ class SwinCrossBlock(L.LightningModule):
         # x: (B*K, H//4, W//4, 128), x_kv: (B*K, K-1, H//4, W//4, 128)
         b, h, w, c = x.shape
 
-        if self.shift_size > 0 and self.attn_mask is None:
-            self.attn_mask = make_attn_mask(
-                h, w, self.window_size, self.shift_size, x.device,
-            ) # [window_num, window_size**2, window_size**2]
+        if self.shift_size > 0:
+            # Create attn_mask on the correct device if needed
+            if self.attn_mask is None or self.attn_mask.device != x.device:
+                self.attn_mask = make_attn_mask(
+                    h, w, self.window_size, self.shift_size, x.device,
+                ) # [window_num, window_size**2, window_size**2]
 
         # Self Attention
         shortcut = x

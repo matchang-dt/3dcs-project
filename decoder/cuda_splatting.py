@@ -24,6 +24,19 @@ def render_gaussians_cuda(
 ) -> torch.Tensor: # (B,V,3,H,W)
     assert use_sh or gaussian_sh_coefficients.shape[-1] == 1
 
+    # CUDA rasterizer requires float32
+    original_dtype = gaussian_means.dtype
+    if gaussian_means.dtype != torch.float32:
+        gaussian_means = gaussian_means.float()
+        gaussian_covariances = gaussian_covariances.float()
+        gaussian_sh_coefficients = gaussian_sh_coefficients.float()
+        gaussian_opacities = gaussian_opacities.float()
+        extrinsics = extrinsics.float()
+        intrinsics = intrinsics.float()
+        near = near.float()
+        far = far.float()
+        background_color = background_color.float()
+
     # for numerical stability
     scale = 1 / near
     extrinsics = extrinsics.clone()
@@ -75,17 +88,25 @@ def render_gaussians_cuda(
         rasterizer = GaussianRasterizer(settings)
 
         row, col = torch.triu_indices(3, 3)
-        image, radii = rasterizer(
-            means3D=gaussian_means[i],
-            means2D=mean_gradients,
-            shs=shs[i] if use_sh else None,
-            colors_precomp=None if use_sh else shs[i, :, 0, :],
-            opacities=gaussian_opacities[i, ..., None],
-            cov3D_precomp=gaussian_covariances[i, :, row, col],
-        )
+        
+        # Disable autocast to ensure float32 for CUDA rasterizer
+        with torch.autocast(device_type='cuda', enabled=False):
+            image, radii = rasterizer(
+                means3D=gaussian_means[i],
+                means2D=mean_gradients,
+                shs=shs[i] if use_sh else None,
+                colors_precomp=None if use_sh else shs[i, :, 0, :],
+                opacities=gaussian_opacities[i, ..., None],
+                cov3D_precomp=gaussian_covariances[i, :, row, col],
+            )
         all_images.append(image)
         all_radii.append(radii)
-    return torch.stack(all_images)
+    
+    result = torch.stack(all_images)
+    # Convert back to original dtype if needed
+    if result.dtype != original_dtype:
+        result = result.to(original_dtype)
+    return result
 
 
 DepthRenderingMode = Literal["depth", "disparity", "relative_disparity", "log"]

@@ -19,7 +19,7 @@ class GaussianHead(nn.Module):
     Predicts gaussian parameters. Specifically, the opacity, covariance, and colors that require NN eval.
     """
     def __init__(self, cfg: GaussianHeadConfig):
-        super().__init__(cfg)
+        super().__init__()
         self.cfg = cfg
         # head for xy offsets, rotation (quaternion rep.), scales, sh coefficients 
         # [xy-offset(2), scales(3), rotation(4), sh(3*sh_dim)]
@@ -53,22 +53,31 @@ class GaussianHead(nn.Module):
         return centers
 
 
-    def forward(self, depth_map, depth_conf, images, extrinsics, intrinsics, global_step=0):
+    def forward(self, depth_map, depth_conf, images, features, extrinsics, intrinsics, global_step=0):
         # depth_map: [B, V, H, W]
         # depth_conf: [B, V, H, W]
         # images: [B, V, 3, H, W]
+        # features: [B, V, H//4, W//4, 128]
         # extrinsics: [B, V, 4, 4]
         # intrinsics: [B, V, 3, 3]
         B, V, H, W = depth_map.shape
         device = depth_map.device
+        _, _, h, w, C = features.shape  # h = H//4, w = W//4
         
         # Map confidence to opacity
         opacities = self._map_conf_to_opacity(depth_conf, global_step)
         
+        # Upsample features to full resolution
+        features_flat = features.view(B * V, h, w, C).permute(0, 3, 1, 2)  # [B*V, 128, H//4, W//4]
+        features_upsampled = torch.nn.functional.interpolate(
+            features_flat, size=(H, W), mode='bilinear', align_corners=False
+        )  # [B*V, 128, H, W]
+        
         # Predict gaussian params
         depth_map_flat = depth_map.view(B * V, 1, H, W)
-        ghead_input = torch.cat([depth_map_flat, images, ])
-        pre_gaussians = self.head(depth_map_flat)  # [B*V, C, H, W]
+        images_flat = images.view(B * V, 3, H, W)
+        ghead_input = torch.cat([depth_map_flat, images_flat, features_upsampled], dim=1)  # [B*V, 132, H, W]
+        pre_gaussians = self.head(ghead_input)  # [B*V, C, H, W]
         pre_gaussians = pre_gaussians.permute(0, 2, 3, 1)  # [B*V, H, W, C]
         pre_gaussians = pre_gaussians.view(B, V, H, W, -1)  # [B, V, H, W, C]
         
