@@ -4,7 +4,20 @@ import torch.nn as nn
 
 
 class ResBlock4Extractor(L.LightningModule):
+    """
+    Residual block for the extractor.
+    Simple 2-layer resblock like the original ResNet, except that the activation function is not ReLU.
+    conv->batchnorm->silu->conv->batchnorm->silu + skip connection
+    """
     def __init__(self, in_channels, out_channels, stride=1, dtype=torch.float32):
+        """
+        Initialize the ResBlock4Extractor.
+        Args:
+            in_channels (int): number of input channels
+            out_channels (int): number of output channels
+            stride (int): stride of the convolution
+            dtype (torch.dtype): data type
+        """
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, 3, stride=stride, padding=1, bias=False, dtype=dtype)
         self.conv2 = nn.Conv2d(out_channels, out_channels, 3, stride=1, padding=1, bias=False, dtype=dtype)
@@ -24,6 +37,13 @@ class ResBlock4Extractor(L.LightningModule):
             nn.init.kaiming_normal_(self.skip.weight, mode='fan_out', nonlinearity='relu')
 
     def forward(self, x):
+        """
+        Forward pass of the ResBlock4Extractor.
+        Args:
+            x (torch.Tensor): input tensor of shape [B, C, H, W]
+        Returns:
+            out (torch.Tensor): output tensor of shape [B, C, H, W]
+        """
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.silu(out)
@@ -36,7 +56,19 @@ class ResBlock4Extractor(L.LightningModule):
 
 
 class ResBlock4UNet(L.LightningModule):
+    """
+    Residual block for the UNet in each refiner.
+    The layer order is different from the ResBlock4Extractor.
+    groupnorm->silu->conv->groupnorm->silu->conv + skip connection
+    """
     def __init__(self, in_channels, out_channels, dtype=torch.float32):
+        """
+        Initialize the ResBlock4UNet.
+        Args:
+            in_channels (int): number of input channels
+            out_channels (int): number of output channels
+            dtype (torch.dtype): data type
+        """
         assert in_channels % 16 == 0, "in_channels must be divisible by 16 for group normalization"
         assert out_channels % 16 == 0, "out_channels must be divisible by 16 for group normalization"
         super().__init__()
@@ -60,6 +92,13 @@ class ResBlock4UNet(L.LightningModule):
             nn.init.kaiming_normal_(self.skip.weight, mode='fan_out', nonlinearity='relu')
 
     def forward(self, x):
+        """
+        Forward pass of the ResBlock4UNet.
+        Args:
+            x (torch.Tensor): input tensor of shape [B, C, H, W]
+        Returns:
+            out (torch.Tensor): output tensor of shape [B, C, H, W]
+        """
         out = self.gn1(x)
         out = self.silu(out)
         out = self.conv1(out)

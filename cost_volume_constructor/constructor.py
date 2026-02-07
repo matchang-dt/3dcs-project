@@ -8,6 +8,16 @@ from .refiner import CostVolumeRefiner
 
 
 def generate_volume_grids(h, w, max_depth, depth_steps=128):
+    """
+    Generate the volume grids for the cost volume construction.
+    Args:
+        h (int): height of the feature map
+        w (int): width of the feature map
+        max_depth (float): maximum depth (far plane)
+        depth_steps (int): number of depth steps
+    Returns:
+        volume_grids (torch.Tensor): output tensor of shape [h, w, d, 4]
+    """
     u_grids = ((2 * torch.arange(h) + 1) / h - 1).view(h, 1).expand(h, w)
     v_grids = ((2 * torch.arange(w) + 1) / w - 1).view(1, w).expand(h, w)
     uv_grids = torch.stack(
@@ -24,11 +34,18 @@ def generate_volume_grids(h, w, max_depth, depth_steps=128):
 
 
 def cost_volume_construct(P_src, P_tgt, f_src, f_tgt, volume_grids, max_depth):
-    # P_src: [B, K, 4, 4]
-    # P_tgt: [B, K, K - 1, 4, 4]
-    # f_src: [B, K, h, w, c]
-    # f_tgt: [B, K, (K - 1), h, w, c]
-    # volume_grids: [h, w, d, 4]
+    """
+    Construct the cost volume from the source and target features.
+    Args:
+        P_src (torch.Tensor): input tensor of shape [B, K, 4, 4] source camera projection matrix
+        P_tgt (torch.Tensor): input tensor of shape [B, K, K - 1, 4, 4] target camera projection matrix
+        f_src (torch.Tensor): input tensor of shape [B, K, h, w, c] source features
+        f_tgt (torch.Tensor): input tensor of shape [B, K, (K - 1), h, w, c] target features
+        volume_grids (torch.Tensor): input tensor of shape [h, w, d, 4] volume grids
+        max_depth (float): maximum depth (far plane)
+    Returns:
+        cost_volume (torch.Tensor): output tensor of shape [B, K, h, w, d]
+    """
     b, k, _, _, = P_src.shape
     h, w, d, _ = volume_grids.shape
     _, _, _, _, c = f_src.shape
@@ -77,6 +94,10 @@ def cost_volume_construct(P_src, P_tgt, f_src, f_tgt, volume_grids, max_depth):
 
 
 class CostVolumeConstructor(L.LightningModule):
+    """
+    Cost volume constructor module.
+    Constructs the cost volume from the source and target features and their projection matrices, then refines the cost volume with a U-net based refiner.
+    """
     def __init__(self, h, w, max_depth, feature_dim=128, dtype=torch.float32): # h=H//4, w=W//4
         # h = H//4, w = W//4
         super().__init__()
@@ -132,6 +153,7 @@ class CostVolumeConstructor(L.LightningModule):
         refine_input = torch.cat([cost_volumes, features], dim=-1) # [B, K, H//4, W//4, 256]
         cost_volume_residuals = self.refiner(refine_input) # [B, K, H//4, W//4, 128]
         cost_volumes = cost_volumes + cost_volume_residuals # [B, K, H//4, W//4, 128]
+        # upsample the cost volume to the original image size
         cost_volumes = cost_volumes.permute(0, 1, 4, 2, 3).reshape(b * k, self.feature_dim, h, w) # [B * K, 128, H//4, W//4]
         cost_volumes = self.up_conv1(cost_volumes) # [B * K, 128, H//2, W//2]
         cost_volumes = self.gn1(cost_volumes) # [B * K, 128, H//2, W//2]

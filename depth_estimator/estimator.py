@@ -7,6 +7,15 @@ from .refiner import DepthRefiner
 
 
 def depth_estimate(cost_volume, max_depth):
+    """
+    Estimate the depth map from the cost volume.
+    Args:
+        cost_volume (torch.Tensor): input tensor of shape [B, K, H, W, D=128]
+        max_depth (float): maximum depth (far plane)
+    Returns:
+        depth_map (torch.Tensor): output tensor of shape [B, K, H, W]
+        depth_conf (torch.Tensor): output tensor of shape [B, K, H, W], the max probability of the depth candidate for each pixel
+    """
     # cost volume: [B, K, H, W, 128]
     b, k, H, W, d = cost_volume.shape
     depth_prob = torch.softmax(cost_volume, dim=-1)
@@ -18,16 +27,35 @@ def depth_estimate(cost_volume, max_depth):
 
 
 class DepthEstimator(L.LightningModule):
-    def __init__(self, max_depth,channels=128, feat_map_size=256, dtype=torch.float32):
+    """
+    Depth estimator module.
+    Estimates the depth map from the cost volume, then refines the depth map with the features and the images by a U-net based refiner.
+    """
+    def __init__(self, max_depth, channels=128, feat_map_size=256, dtype=torch.float32):
+        """
+        Initialize the DepthEstimator.
+        Args:
+            max_depth (float): maximum depth (far plane)
+            channels (int): number of channels for the features
+            feat_map_size (int): size of the feature map
+            dtype (torch.dtype): data type
+        """
         super().__init__()
         self.to(dtype)
         self.max_depth = max_depth
         self.refiner = DepthRefiner(channels, feat_map_size, dtype)
     
     def forward(self, cost_volume, images, features):
-        # cost_volume: [B, K, H, W, 128]
-        # images: [B, K, 3, H, W]
-        # features: [B, K, H//4, W//4, 128]
+        """
+        Forward pass of the DepthEstimator.
+        Args:
+            cost_volume (torch.Tensor): input tensor of shape [B, K, H, W, D=128]
+            images (torch.Tensor): input tensor of shape [B, K, 3, H, W]
+            features (torch.Tensor): input tensor of shape [B, K, H//4, W//4, 128] features extracted from the extractor
+        Returns:
+            depth_map (torch.Tensor): output tensor of shape [B, K, H, W]
+            depth_conf (torch.Tensor): output tensor of shape [B, K, H, W], the max probability of the depth candidate for each pixel
+        """
         b, k, H, W, d = cost_volume.shape # h=H//4, w=W//4
         images = images.reshape(-1, 3, H, W) # [B*K, 3, H, W]
         features = features.reshape(-1, H//4, W//4, d).permute(0, 3, 1, 2) # [B*K, 128, H//4, W//4]

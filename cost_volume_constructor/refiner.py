@@ -6,7 +6,18 @@ from utils import WindowSelfAttention, WindowCrossAttention, ResBlock4UNet, patc
 
 
 class CostVolumeRefiner(L.LightningModule):
+    """
+    Cost volume refiner module.
+    Refines the cost volume with the features and the images by a U-net based refiner.
+    """
     def __init__(self, channels=128, feat_map_size=64, dtype=torch.float32):
+        """
+        Initialize the CostVolumeRefiner.
+        Args:
+            channels (int): number of channels for the features
+            feat_map_size (int): size of the feature map
+            dtype (torch.dtype): data type
+        """
         super().__init__()
         self.channels = channels
         self.to(dtype)
@@ -33,6 +44,13 @@ class CostVolumeRefiner(L.LightningModule):
 
 
     def forward(self, x):
+        """
+        Forward pass of the CostVolumeRefiner.
+        Args:
+            x (torch.Tensor): input tensor of shape [B, K, H//4, W//4, d (128*2)] concat of upsampled features (128) and cost volume (128)
+        Returns:
+            out (torch.Tensor): output tensor of shape [B, K, H//4, W//4, 128]
+        """
         # x: [B, K, H//4, W//4, d (128*2)]
         b, k, h, w, d = x.shape
         x = x.permute(0, 1, 4, 2, 3).reshape(b*k, d, h, w) # [B, K, H//4, W//4, d] -> [B*K, d, H//4, W//4]
