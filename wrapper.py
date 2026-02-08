@@ -7,12 +7,26 @@ and the Lightning training logic. It can be used standalone or with Hydra config
 import torch
 import torch.nn.functional as F
 import lightning as L
+import numpy as np
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
 
 from model import MVSplat, MVSplatConfig
 from lpips import LPIPS
+from lightning.pytorch.loggers import WandbLogger
 
+
+def _apply_jet_cmap(x: torch.Tensor) -> torch.Tensor:
+    """Apply jet colormap (blue=low, red=high) to a 2D tensor. Returns [3, H, W] RGB."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    x_np = x.detach().cpu().float().numpy()
+    x_np = (x_np - x_np.min()) / (x_np.max() - x_np.min() + 1e-8)
+    cm = plt.get_cmap("jet")
+    rgb = cm(x_np)[:, :, :3]  # [H, W, 3]
+    out = torch.from_numpy(rgb).float().permute(2, 0, 1).to(device=x.device)
+    return out
 
 @dataclass
 class LightningConfig:
@@ -129,7 +143,7 @@ class MVSplatWrapper(L.LightningModule):
             'lpips_loss': lpips_loss,
         }
     
-    def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
+    def training_step(self, batch: Dict[str, Any], batch_idx: int) -> Optional[torch.Tensor]:
         """
         Training step - called by Lightning for each batch.
         
@@ -140,6 +154,9 @@ class MVSplatWrapper(L.LightningModule):
         Returns:
             Loss tensor for backpropagation
         """
+        if batch is None:
+            return None
+            
         # model out
         outputs = self(batch, render_depth=False)
         losses = self.compute_loss(outputs, batch)
@@ -172,7 +189,7 @@ class MVSplatWrapper(L.LightningModule):
         
         return losses['loss']
     
-    def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
+    def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> Optional[torch.Tensor]:
         """
         Validation step - called by Lightning for each validation batch.
         
@@ -183,6 +200,9 @@ class MVSplatWrapper(L.LightningModule):
         Returns:
             Loss tensor
         """
+        if batch is None:
+            return None
+            
         outputs = self(batch, render_depth=True)
         losses = self.compute_loss(outputs, batch)
         
@@ -204,70 +224,86 @@ class MVSplatWrapper(L.LightningModule):
     
     def log_images(self, batch: Dict[str, Any], outputs: Dict[str, torch.Tensor]):
         """
-        Log sample images to TensorBoard.
-        
-        Args:
-            batch: Input batch
-            outputs: Model outputs
+        Log images for all target views in the first batch (WandB or TensorBoard).
+        Depth and diff maps use jet colormap (blue=low, red=high). All images are 3D [3, H, W].
         """
         if self.logger is None:
             return
-        
+
+        def ensure_3ch(t: torch.Tensor) -> torch.Tensor:
+            """Ensure tensor is [3, H, W] for logging."""
+            if t.ndim == 2:
+                t = t.unsqueeze(0).expand(3, -1, -1)
+            return t.clamp(0.0, 1.0).float()
+
         try:
-            # Get first sample in batch
-            rendered = outputs['rendered_images']
-            if rendered.ndim == 5:  # [B, V, 3, H, W]
-                rendered = rendered[0, 0]  # Take first batch, first view
-            else:  # [V, 3, H, W]
-                rendered = rendered[0]
-            
-            target = batch['target']['images']
-            if target.ndim == 5:
-                target = target[0, 0]
-            elif target.ndim == 4:
-                target = target[0]
-            
-            # Get depth map if available
-            if 'rendered_depth' in outputs and outputs['rendered_depth'] is not None:
-                depth = outputs['rendered_depth']
-                if depth.ndim == 4:  # [B, V, H, W]
-                    depth = depth[0, 0]
-                elif depth.ndim == 3:  # [V, H, W]
-                    depth = depth[0]
-                
-                # Normalize depth for visualization
-                depth_vis = depth / (depth.max() + 1e-6)
-                depth_vis = depth_vis.unsqueeze(0) if depth_vis.ndim == 2 else depth_vis
+            rendered = outputs["rendered_images"]  # [B, V, 3, H, W] or [V, 3, H, W]
+            target = batch["target"]["images"]
+            if target.ndim == 4:
+                target = target.unsqueeze(0)
+            # First batch only
+            if rendered.ndim == 5:
+                rendered_b0 = rendered[0]  # [V, 3, H, W]
+                target_b0 = target[0]      # [V, 3, H, W]
             else:
-                # Use depth_maps from estimator as fallback
-                depth = outputs['depth_maps']
-                if depth.ndim == 4:  # [B, V, H, W]
-                    depth = depth[0, 0]
-                else:  # [V, H, W]
-                    depth = depth[0]
-                depth_vis = depth / (depth.max() + 1e-6)
-            
-            # Clamp rendered and target to [0, 1] for visualization
-            rendered = torch.clamp(rendered, 0, 1)
-            target = torch.clamp(target, 0, 1)
-            
-            # Log to TensorBoard
-            self.logger.experiment.add_image(
-                'val/rendered', 
-                rendered, 
-                self.global_step
-            )
-            self.logger.experiment.add_image(
-                'val/target', 
-                target, 
-                self.global_step
-            )
-            self.logger.experiment.add_image(
-                'val/depth', 
-                depth_vis, 
-                self.global_step
-            )
-            
+                rendered_b0 = rendered
+                target_b0 = target
+
+            num_views = rendered_b0.shape[0]
+            if num_views == 0:
+                return
+
+            # Depth only when we have rendered_depth (do not use depth_maps; they are per context view, not target)
+            has_depth = "rendered_depth" in outputs and outputs["rendered_depth"] is not None
+            if has_depth:
+                d = outputs["rendered_depth"]
+                depth_b0 = d[0] if d.ndim == 4 else d  # [V, H, W]
+                depth_global_max = depth_b0.max() + 1e-6
+                depth_views = depth_b0.shape[0]
+            else:
+                depth_views = 0
+
+            list_rendered = []
+            list_target = []
+            list_depth_jet = []
+            list_diff_jet = []
+            captions_rendered = []
+            captions_target = []
+            captions_depth = []
+            captions_diff = []
+
+            for v in range(num_views):
+                r_v = torch.clamp(rendered_b0[v], 0, 1).float()
+                t_v = torch.clamp(target_b0[v], 0, 1).float()
+                diff_v = (r_v - t_v).abs().mean(dim=0)
+                diff_jet_v = _apply_jet_cmap(diff_v)
+
+                list_rendered.append(ensure_3ch(r_v))
+                list_target.append(ensure_3ch(t_v))
+                list_diff_jet.append(diff_jet_v)
+                captions_rendered.append(f"view{v}")
+                captions_target.append(f"view{v}")
+                captions_diff.append(f"view{v}")
+
+                if has_depth and v < depth_views:
+                    depth_v = (depth_b0[v] / depth_global_max).clamp(0, 1)
+                    list_depth_jet.append(_apply_jet_cmap(depth_v))
+                    captions_depth.append(f"view{v}")
+
+            if isinstance(self.logger, WandbLogger):
+                self.logger.log_image(key="val/rendered", images=list_rendered, caption=captions_rendered)
+                self.logger.log_image(key="val/target", images=list_target, caption=captions_target)
+                if list_depth_jet:
+                    self.logger.log_image(key="val/depth_jet", images=list_depth_jet, caption=captions_depth)
+                self.logger.log_image(key="val/diff_jet", images=list_diff_jet, caption=captions_diff)
+            elif hasattr(self.logger.experiment, "add_image"):
+                step = self.global_step
+                for v in range(num_views):
+                    self.logger.experiment.add_image(f"val/rendered_view{v}", list_rendered[v], step)
+                    self.logger.experiment.add_image(f"val/target_view{v}", list_target[v], step)
+                    self.logger.experiment.add_image(f"val/diff_jet_view{v}", list_diff_jet[v], step)
+                for v, img in enumerate(list_depth_jet):
+                    self.logger.experiment.add_image(f"val/depth_jet_view{v}", img, step)
         except Exception as e:
             print(f"Warning: Error logging images: {e}")
     
