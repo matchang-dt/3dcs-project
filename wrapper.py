@@ -31,6 +31,7 @@ class LightningConfig:
     
     # Loss weights
     rgb_loss_weight: float = 1.0
+    lpips_loss_weight: float = 0.05
     
     # Logging
     log_images_every_n_steps: int = 1000
@@ -82,7 +83,9 @@ class MVSplatWrapper(L.LightningModule):
         self.model_config = model_config
         self.lightning_config = lightning_config or LightningConfig()
         self.model = MVSplat(model_config)
-        self.lpips = LPIPS(net_type='vgg').to(self.model.device)
+        self.lpips = LPIPS(net='vgg')
+        for p in self.lpips.parameters(): # freeze LPIPS
+            p.requires_grad = False
         
     def forward(self, batch: Dict[str, Any], render_depth: bool = False) -> Dict[str, torch.Tensor]:
         """
@@ -118,8 +121,8 @@ class MVSplatWrapper(L.LightningModule):
         if target.ndim == 4:
             target = target.unsqueeze(0)
 
-        rgb_loss = F.mse_loss(rendered, target)
-        lpips_loss = self.lpips(rendered, target)
+        rgb_loss = torch.mean(F.mse_loss(rendered.flatten(0, 1), target.flatten(0, 1)))
+        lpips_loss = torch.mean(self.lpips(rendered.flatten(0, 1), target.flatten(0, 1))) * self.lightning_config.lpips_loss_weight
         return {
             'loss': rgb_loss + lpips_loss,
             'rgb_loss': rgb_loss,
@@ -164,7 +167,7 @@ class MVSplatWrapper(L.LightningModule):
             )
 
         # periodically log images during training
-        if self.global_step % self.log_images_every_n_steps == 0:
+        if self.global_step % self.lightning_config.log_images_every_n_steps == 0:
             self.log_images(batch, outputs)
         
         return losses['loss']
@@ -194,7 +197,7 @@ class MVSplatWrapper(L.LightningModule):
             )
         
         # periodically log images
-        if self.global_step % self.log_images_every_n_steps == 0:
+        if self.global_step % self.lightning_config.log_images_every_n_steps == 0:
             self.log_images(batch, outputs)
         
         return losses['loss']

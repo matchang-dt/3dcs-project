@@ -8,7 +8,7 @@ swin_divisions: 2
 
 # Data types
 cnn_dtype: float32
-transformer_dtype: bfloat16
+transformer_dtype: float32
 pipeline_dtype: float32
 
 # Cost volume

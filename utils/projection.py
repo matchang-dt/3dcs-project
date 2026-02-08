@@ -119,3 +119,11 @@ def get_camera_rays_world(
     ray_d = ray_d / ray_d.norm(dim=-1, keepdim=True) # ensure unit length
     
     return ray_o, ray_d
+
+def make_proj_matrix(extrinsics, intrinsics):
+    # extrinsics: [B, V, 4, 4], intrinsics: [B, V, 3, 3]
+    B, V = extrinsics.shape[:2]
+    K = torch.zeros((B, V, 4, 4), device=extrinsics.device, dtype=extrinsics.dtype)
+    K[:, :, :3, :3] = intrinsics
+    K[:, :, 3, 3] = 1.0
+    return K @ extrinsics

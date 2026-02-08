@@ -64,40 +64,52 @@ def render_gaussians_cuda(
 
     all_images = []
     all_radii = []
+    row, col = torch.triu_indices(3, 3)
     for i in range(B):
-        mean_gradients = torch.zeros_like(gaussian_means[i], requires_grad=True)
+        means3D_i = gaussian_means[i].float()
+        mean_gradients = torch.zeros_like(means3D_i, requires_grad=True).float()
         try:
             mean_gradients.retain_grad()
         except Exception:
             pass
+
+        # diff-gaussian-rasterization CUDA extension only supports float32
+        with torch.autocast(device_type='cuda', enabled=False):
+            viewmatrix = view_matrix[i].float()
+            projmatrix = full_projection[i].float()
+            bg = background_color[i, ...].float()
+            campos = extrinsics[i, :3, 3].float()
+            means3D = means3D_i
+            means2D = mean_gradients
+            opacities = gaussian_opacities[i, ..., None].float()
+            cov3D = gaussian_covariances[i, :, row, col].float()
+            shs_i = (shs[i].float() if use_sh else None)
+            colors_precomp = (None if use_sh else shs[i, :, 0, :].float())
 
         settings = GaussianRasterizationSettings(
             image_height=H,
             image_width=W,
             tanfovx=tan_fov_x[i].item(),
             tanfovy=tan_fov_y[i].item(),
-            bg=background_color[i, ...],
+            bg=bg,
             scale_modifier=1.0,
-            viewmatrix=view_matrix[i],
-            projmatrix=full_projection[i],
+            viewmatrix=viewmatrix,
+            projmatrix=projmatrix,
             sh_degree=degree,
-            campos=extrinsics[i, :3, 3],
+            campos=campos,
             prefiltered=False,
             debug=False,
         )
         rasterizer = GaussianRasterizer(settings)
 
-        row, col = torch.triu_indices(3, 3)
-        
-        # Disable autocast to ensure float32 for CUDA rasterizer
         with torch.autocast(device_type='cuda', enabled=False):
             image, radii = rasterizer(
-                means3D=gaussian_means[i],
-                means2D=mean_gradients,
-                shs=shs[i] if use_sh else None,
-                colors_precomp=None if use_sh else shs[i, :, 0, :],
-                opacities=gaussian_opacities[i, ..., None],
-                cov3D_precomp=gaussian_covariances[i, :, row, col],
+                means3D=means3D,
+                means2D=means2D,
+                shs=shs_i,
+                colors_precomp=colors_precomp,
+                opacities=opacities,
+                cov3D_precomp=cov3D,
             )
         all_images.append(image)
         all_radii.append(radii)

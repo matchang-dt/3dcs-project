@@ -28,6 +28,7 @@ def cost_volume_construct(P_src, P_tgt, f_src, f_tgt, volume_grids, max_depth):
     # f_src: [B, K, h, w, c]
     # f_tgt: [B, K, (K - 1), h, w, c]
     # volume_grids: [h, w, d, 4]
+    # NOTE: ensure float32 dtype at least for this constuction 
     b, k, _, _, = P_src.shape
     h, w, d, _ = volume_grids.shape
     _, _, _, _, c = f_src.shape
@@ -35,9 +36,10 @@ def cost_volume_construct(P_src, P_tgt, f_src, f_tgt, volume_grids, max_depth):
     eps = 1e-6
     f_src = f_src.unsqueeze(-2).expand(b, k, h, w, d, c) # [B, K, h, w, d, c]
     f_tgt = f_tgt.unsqueeze(-2).expand(b, k, k - 1, h, w, d, c) # [B, K, K - 1, h, w, d, c]
-    P_tgt_inv = torch.linalg.inv(P_tgt) # [B, K, K - 1, 4, 4]
-    P_merged = torch.einsum('bkmn,bklno->bklmo', P_src, P_tgt_inv) # [B, K, K - 1, 4, 4]
-    warped = torch.einsum('bklij,hwdj->bklhwdi', P_merged, volume_grids) # [B, K, K - 1, h, w, d, 4]
+    P_tgt_inv = torch.linalg.inv(P_tgt.to(torch.float32)) # [B, K, K - 1, 4, 4]
+    P_merged = torch.einsum('bkmn,bklno->bklmo', P_src.to(torch.float32), P_tgt_inv) # [B, K, K - 1, 4, 4]
+    warped = torch.einsum('bklij,hwdj->bklhwdi', P_merged, volume_grids.to(torch.float32)) # [B, K, K - 1, h, w, d, 4]
+    warped = warped.to(f_src.dtype)
     warped_uv = (warped[..., :2] / warped[..., 2:3] + 1) / 2 # [B, K, K - 1, h, w, d, 2]
     warped_ij = warped_uv * torch.tensor([h, w], device=device, dtype=warped_uv.dtype) - 0.5 # [B, K, K - 1, h, w, d, 2]
     warped_ij = warped_ij.round().long() # [B, K, K - 1, h, w, d, 2]

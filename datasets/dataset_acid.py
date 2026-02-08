@@ -20,10 +20,11 @@ from pathlib import Path
 from io import BytesIO
 from PIL import Image
 import numpy as np
-
+from einops import rearrange, repeat
 from .view_sampler.view_sampler import ViewSet, ViewSampler, ViewSamplerDefault
 from .shims.crop_shim import apply_crop_shim_to_views
 from .shims.norm_shim import normalize_scene
+
 
 # ! CAREFUL WITH THIS AND RE10K DATASETS
 # target_image_size for other datasets are used to scale original images
@@ -131,7 +132,8 @@ class AcidDataset(IterableDataset):
         
         Args:
             cameras: [V, 18] tensor with format:
-                [fx, fy, cx, cy, 0, 0, R00, R01, R02, t0, R10, R11, R12, t1, R20, R21, R22, t2]
+                [fx, fy, cx, cy, 0, 0, row-major 3x4 flattened] i.e. indices 6:18 are
+                [R00, R01, R02, t0, R10, R11, R12, t1, R20, R21, R22, t2]
                 Note: fx, fy, cx, cy are normalized to [0, 1] for the ORIGINAL image dimensions
             original_dims: (H, W) original image dimensions before crop/resize
         
@@ -179,17 +181,11 @@ class AcidDataset(IterableDataset):
         intrinsics[:, 1, 2] = cy
         intrinsics[:, 2, 2] = 1.0
         
-        # Extract rotation and translation
-        # cameras[:, 6:15] contains R (row-major: R00, R01, R02, R10, R11, R12, R20, R21, R22)
-        # cameras[:, 9::4][:3] = t0, t1, t2 but let's be explicit
-        R = cameras[:, 6:15].reshape(V, 3, 3)
-        t = torch.stack([cameras[:, 9], cameras[:, 13], cameras[:, 17]], dim=1)  # [V, 3]
-        
-        # Build extrinsics [V, 4, 4] as [R | t; 0 0 0 1]
-        extrinsics = torch.zeros(V, 4, 4, dtype=cameras.dtype, device=cameras.device)
-        extrinsics[:, :3, :3] = R
-        extrinsics[:, :3, 3] = t
-        extrinsics[:, 3, 3] = 1.0
+        # Build extrinsics [V, 4, 4] as OpenCV-style W2C (world-to-camera).
+        # cameras[:, 6:18] is row-major 3x4 [R|t] (R00..R22, t0, t1, t2).
+        w2c = repeat(torch.eye(4, dtype=torch.float32, device=cameras.device), "h w -> v h w", v=V).clone()
+        w2c[:, :3] = rearrange(cameras[:, 6:18], "v (h w) -> v h w", h=3, w=4)
+        extrinsics = w2c.to(cameras.dtype)
         
         return intrinsics, extrinsics
     

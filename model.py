@@ -13,6 +13,7 @@ from decoder.decoder_cuda_splatting_gaussians import (
     DecoderGaussianSplattingCUDACfg,
 )
 from datasets.dataset import DatasetCfg
+from utils.projection import make_proj_matrix
 
 
 @dataclass
@@ -50,7 +51,6 @@ class MVSplatConfig:
     # Decoder params
     decoder_cfg: Optional[DecoderGaussianSplattingCUDACfg] = None
     dataset_cfg: Optional[DatasetCfg] = None
-
 
 class MVSplat(nn.Module):
     """
@@ -156,10 +156,12 @@ class MVSplat(nn.Module):
         features = self.extractor(context_images)
         features = features.to(self.cfg.pipeline_dtype)
 
+        proj_matrices = make_proj_matrix(context_extrinsics, context_intrinsics)
+
         # 2. Cost volume
         cost_volume = self.cost_volume_constructor(
             features=features,
-            Ps=context_extrinsics,
+            Ps=proj_matrices,
         )
 
         # 3. Depth estimation

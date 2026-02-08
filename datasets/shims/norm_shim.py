@@ -101,7 +101,6 @@ def normalize_scene(viewset: ViewSet, target_radius: float = 1.0) -> ViewSet:
     Center and normalize the scene cameras to a target radius.
     Uses max pairwise camera distance.
     """
-    print(viewset)
     extrinsics = viewset.extrinsics  # (V, 4, 4)
     R_w2c = extrinsics[:, :3, :3]
     t_w2c = extrinsics[:, :3, 3:4]
