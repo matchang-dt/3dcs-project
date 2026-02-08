@@ -1,0 +1,46 @@
+# @package _global_
+# Training configuration (merged at root when composed with config.yaml)
+
+# Optimizer
+optimizer:
+  name: adam
+  lr: 1.0e-4
+  weight_decay: 0.0
+  betas: [0.9, 0.999]
+
+# Learning rate scheduler
+scheduler:
+  name: cosine
+  T_max: 300000
+  eta_min: 1.0e-6
+  warmup_steps: 2000
+
+# Training parameters
+batch_size: 2
+num_workers: 4
+max_steps: 300000
+val_check_interval: 5000
+log_every_n_steps: 100
+gradient_clip_val: 1.0
+
+# Loss configuration
+loss:
+  rgb_loss_weight: 1.0
+  use_lpips: false  # Set to true if you have LPIPS installed
+  lpips_weight: 0.1
+
+# Checkpointing
+checkpoint:
+  save_top_k: 3
+  monitor: val/loss
+  mode: min
+  save_last: true
+  dirpath: checkpoints/
+  filename: mvsplat-{epoch:02d}-{step:06d}
+
+# Mixed precision
+precision: 16-mixed  # or '32' or 'bf16-mixed'
+
+# Save validation images to disk (optional, set to a path to enable)
+save_images_dir: null  # e.g. "outputs/val_images"
+save_images_every_n_val: 1  # Save every N validation runs (1 = every time)
