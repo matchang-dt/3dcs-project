@@ -23,7 +23,7 @@ import numpy as np
 
 from einops import rearrange, repeat
 from .view_sampler.view_sampler import ViewSet, ViewSampler, ViewSamplerDefault
-from .shims.norm_shim import normalize_scene
+from .shims.norm_shim import normalize_scene, normalize_intrinsics
 
 # ! CAREFUL WITH THIS AND ACID DATASETS
 # target_image_size for other datasets are used to scale original images
@@ -214,6 +214,7 @@ class Re10kDataset(IterableDataset):
             
             # Parse cameras with original dimensions
             intrinsics, extrinsics = self.parse_cameras(cameras, original_dims)
+            intrinsics = normalize_intrinsics(intrinsics, image_size=self.target_image_size)
             
             viewset = ViewSet(
                 extrinsics=extrinsics,
@@ -275,7 +276,7 @@ class Re10kDataset(IterableDataset):
                             'extrinsics': target_views.extrinsics,  # [num_target_views, 4, 4]
                         },
                         'scene_key': scene_dict.get('key', 'unknown'),
-                        'near_plane': scene_dict.get('near_plane', 0.1),
+                        'near_plane': scene_dict.get('near_plane', 1.0),
                         'far_plane': scene_dict.get('far_plane', 100.0),
                     }
                     yield batch

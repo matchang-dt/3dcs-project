@@ -37,6 +37,11 @@ def render_gaussians_cuda(
         far = far.float()
         background_color = background_color.float()
 
+    assert torch.isfinite(gaussian_means).all()
+    assert torch.isfinite(gaussian_covariances).all()
+    assert torch.isfinite(gaussian_sh_coefficients).all()
+    assert (gaussian_opacities >= 0).all()
+
     # for numerical stability
     scale = 1 / near
     extrinsics = extrinsics.clone()
@@ -67,24 +72,25 @@ def render_gaussians_cuda(
     row, col = torch.triu_indices(3, 3)
     for i in range(B):
         means3D_i = gaussian_means[i].float()
-        mean_gradients = torch.zeros_like(means3D_i, requires_grad=True).float()
+        mean_gradients = torch.zeros_like(means3D_i, requires_grad=True, dtype=torch.float32)
         try:
             mean_gradients.retain_grad()
         except Exception:
             pass
 
-        # diff-gaussian-rasterization CUDA extension only supports float32
-        with torch.autocast(device_type='cuda', enabled=False):
-            viewmatrix = view_matrix[i].float()
-            projmatrix = full_projection[i].float()
-            bg = background_color[i, ...].float()
-            campos = extrinsics[i, :3, 3].float()
-            means3D = means3D_i
-            means2D = mean_gradients
-            opacities = gaussian_opacities[i, ..., None].float()
-            cov3D = gaussian_covariances[i, :, row, col].float()
-            shs_i = (shs[i].float() if use_sh else None)
-            colors_precomp = (None if use_sh else shs[i, :, 0, :].float())
+        # ensure these are all float32
+        assert row.min() >= 0 and row.max() < H
+        assert col.min() >= 0 and col.max() < W
+        viewmatrix = view_matrix[i].float()
+        projmatrix = full_projection[i].float()
+        bg = background_color[i, ...].float()
+        campos = extrinsics[i, :3, 3].float()
+        means3D = means3D_i
+        means2D = mean_gradients
+        opacities = gaussian_opacities[i, ..., None].float()
+        cov3D = gaussian_covariances[i, :, row, col].float()
+        shs_i = (shs[i].float() if use_sh else None)
+        colors_precomp = (None if use_sh else shs[i, :, 0, :].float())
 
         settings = GaussianRasterizationSettings(
             image_height=H,
@@ -102,15 +108,14 @@ def render_gaussians_cuda(
         )
         rasterizer = GaussianRasterizer(settings)
 
-        with torch.autocast(device_type='cuda', enabled=False):
-            image, radii = rasterizer(
-                means3D=means3D,
-                means2D=means2D,
-                shs=shs_i,
-                colors_precomp=colors_precomp,
-                opacities=opacities,
-                cov3D_precomp=cov3D,
-            )
+        image, radii = rasterizer(
+            means3D=means3D,
+            means2D=means2D,
+            shs=shs_i,
+            colors_precomp=colors_precomp,
+            opacities=opacities,
+            cov3D_precomp=cov3D,
+        )
         all_images.append(image)
         all_radii.append(radii)
     

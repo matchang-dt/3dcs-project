@@ -40,16 +40,16 @@ class DecoderGaussianSplattingCUDA(Decoder[DecoderGaussianSplattingCUDACfg]):
         bg_color = self.background_color.to(device=extrinsics.device, dtype=torch.float32)
         
         color = render_gaussians_cuda(
-            rearrange(extrinsics, "b v i j -> (b v) i j"),
-            rearrange(intrinsics, "b v i j -> (b v) i j"),
-            rearrange(near, "b v -> (b v)"),
-            rearrange(far, "b v -> (b v)"),
+            rearrange(extrinsics, "b v i j -> (b v) i j").contiguous(),
+            rearrange(intrinsics, "b v i j -> (b v) i j").contiguous(),
+            rearrange(near, "b v -> (b v)").contiguous(),
+            rearrange(far, "b v -> (b v)").contiguous(),
             image_shape,
-            repeat(bg_color, "c -> (b v) c", b=B, v=V),
-            repeat(gaussians.means, "b g xyz -> (b v) g xyz", v=V),
-            repeat(gaussians.covariances, "b g i j -> (b v) g i j", v=V),
-            repeat(gaussians.harmonics, "b g c d_sh -> (b v) g c d_sh", v=V),
-            repeat(gaussians.opacities, "b g -> (b v) g", v=V),
+            repeat(bg_color, "c -> (b v) c", b=B, v=V).contiguous(),
+            repeat(gaussians.means, "b g xyz -> (b v) g xyz", v=V).contiguous(),
+            repeat(gaussians.covariances, "b g i j -> (b v) g i j", v=V).contiguous(),
+            repeat(gaussians.harmonics, "b g c d_sh -> (b v) g c d_sh", v=V).contiguous(),
+            repeat(gaussians.opacities, "b g -> (b v) g", v=V).contiguous(),
         )
         color = rearrange(color, "(b v) c h w -> b v c h w", b=B, v=V)
         depth = None
@@ -75,14 +75,14 @@ class DecoderGaussianSplattingCUDA(Decoder[DecoderGaussianSplattingCUDACfg]):
     ) -> torch.Tensor: # (B,V,H,W)
         B, V = extrinsics.shape[:2]
         result = render_depth_gaussians_cuda(
-            rearrange(extrinsics, "b v i j -> (b v) i j"),
-            rearrange(intrinsics, "b v i j -> (b v) i j"),
-            rearrange(near, "b v -> (b v)"),
-            rearrange(far, "b v -> (b v)"),
+            rearrange(extrinsics, "b v i j -> (b v) i j").contiguous(),
+            rearrange(intrinsics, "b v i j -> (b v) i j").contiguous(),
+            rearrange(near, "b v -> (b v)").contiguous(),
+            rearrange(far, "b v -> (b v)").contiguous(),
             image_shape,
-            repeat(gaussians.means, "b g xyz -> (b v) g xyz", v=V),
-            repeat(gaussians.covariances, "b g i j -> (b v) g i j", v=V),
-            repeat(gaussians.opacities, "b g -> (b v) g", v=V),
+            repeat(gaussians.means, "b g xyz -> (b v) g xyz", v=V).contiguous(),
+            repeat(gaussians.covariances, "b g i j -> (b v) g i j", v=V).contiguous(),
+            repeat(gaussians.opacities, "b g -> (b v) g", v=V).contiguous(),
             mode=mode,
         )
         return rearrange(result, "(b v) h w -> b v h w", b=B, v=V)

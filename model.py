@@ -156,7 +156,9 @@ class MVSplat(nn.Module):
         features = self.extractor(context_images)
         features = features.to(self.cfg.pipeline_dtype)
 
-        proj_matrices = make_proj_matrix(context_extrinsics, context_intrinsics)
+        with torch.autocast(device_type='cuda', enabled=False):
+            proj_matrices = make_proj_matrix(context_extrinsics, context_intrinsics)
+        proj_matrices = proj_matrices.to(self.cfg.pipeline_dtype)
 
         # 2. Cost volume
         cost_volume = self.cost_volume_constructor(

@@ -116,12 +116,13 @@ class GaussianAdapter(torch.nn.Module):
         sh = sh.expand(B, V, H*W, srf, gpp, 3, self.sh_dim)
         sh = rotate_sh(sh, R_c2w)
         # sh: (B,V,R,srf,gpp,3,sh_dim)
-
+        
+        # ensure these are float32 for the rasterizer
         return Gaussians(
-            means=means,
-            scales=scales,
-            covariances=covariances,
-            rotations=quaternions,
-            opacities=opacities,
-            harmonics=sh,
+            means=means.float(),
+            scales=scales.float(),
+            covariances=covariances.float(),
+            rotations=quaternions.float(),
+            opacities=opacities.float(),
+            harmonics=sh.float(),
         )
