@@ -32,6 +32,10 @@ class WindowSelfAttention(L.LightningModule):
 
         self.qkv = nn.Linear(dim, dim * 3, dtype=dtype)
         self.proj = nn.Linear(dim, dim, dtype=dtype)
+        nn.init.xavier_normal_(self.qkv.weight)
+        nn.init.constant_(self.proj.weight, 0)
+        nn.init.constant_(self.qkv.bias, 0)
+        nn.init.constant_(self.proj.bias, 0)
 
         # relative position bias
         size = (2 * window_size - 1) ** 2
@@ -108,7 +112,13 @@ class WindowCrossAttention(L.LightningModule):
         self.q = nn.Linear(dim, dim, dtype=dtype)
         self.kv = nn.Linear(dim, dim * 2, dtype=dtype)
         self.proj = nn.Linear(dim, dim, dtype=dtype)
-        
+        nn.init.xavier_normal_(self.q.weight)
+        nn.init.xavier_normal_(self.kv.weight)
+        nn.init.constant_(self.proj.weight, 0)
+        nn.init.constant_(self.q.bias, 0)
+        nn.init.constant_(self.kv.bias, 0)
+        nn.init.constant_(self.proj.bias, 0)
+
         # relative position bias
         size = (2 * window_size - 1) ** 2
         self.rel_pos = nn.Parameter(torch.zeros(size, num_heads, dtype=dtype)) # [(2 * window_size - 1)**2, num_heads]
@@ -190,11 +200,14 @@ class SwinCrossBlock(L.LightningModule):
         self.self_attn = WindowSelfAttention(dim, window_size, num_heads, dtype=dtype)
         self.cross_attn = WindowCrossAttention(dim, window_size, num_heads, dtype=dtype)
 
-        self.mlp = nn.Sequential(
-            nn.Linear(dim, 4 * dim, dtype=dtype),
-            nn.GELU(),
-            nn.Linear(4 * dim, dim, dtype=dtype),
-        )
+        self.fc1 = nn.Linear(dim, 4 * dim, dtype=dtype)
+        self.fc2 = nn.Linear(4 * dim, dim, dtype=dtype)
+        nn.init.xavier_normal_(self.fc1.weight)
+        nn.init.constant_(self.fc2.weight, 0)
+        nn.init.constant_(self.fc1.bias, 0)
+        nn.init.constant_(self.fc2.bias, 0)
+
+        self.mlp = nn.Sequential(self.fc1, nn.GELU(), self.fc2)
 
         self.attn_mask = None
 
