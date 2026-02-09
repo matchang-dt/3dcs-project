@@ -2,7 +2,7 @@ import lightning as L
 import torch
 from torch import nn
 
-from utils import WindowSelfAttention, WindowCrossAttention, ResBlock4UNet, patchify
+from utils import SwinCrossBlock, ResBlock4UNet, patchify
 
 
 class CostVolumeRefiner(L.LightningModule):
@@ -19,8 +19,9 @@ class CostVolumeRefiner(L.LightningModule):
             dtype (torch.dtype): data type
         """
         super().__init__()
-        self.channels = channels
         self.to(dtype)
+        self.channels = channels
+        num_groups = channels // 16
         self.res_enc1_1 = ResBlock4UNet(channels*2, channels, dtype)
         self.res_enc1_2 = ResBlock4UNet(channels, channels, dtype)
         self.down_conv1 = nn.Conv2d(channels, channels, 3, stride=2, padding=1, bias=False, dtype=dtype)
@@ -33,15 +34,20 @@ class CostVolumeRefiner(L.LightningModule):
         self.up_conv2 = nn.ConvTranspose2d(channels, channels, 4, stride=2, padding=1, bias=False, dtype=dtype)
         self.res_dec2_1 = ResBlock4UNet(channels*2, channels, dtype)
         self.res_dec2_2 = ResBlock4UNet(channels, channels, dtype)
-        self.self_attn = WindowSelfAttention(channels, window_size=feat_map_size//4, num_heads=1, dtype=dtype) # only 1 window: not swinT
-        self.cross_attn1 = WindowCrossAttention(channels, window_size=feat_map_size//4, num_heads=1, dtype=dtype) # only 1 window: not swinT
-        self.cross_attn2 = WindowCrossAttention(channels, window_size=feat_map_size//4, num_heads=1, dtype=dtype) # only 1 window: not swinT
-        self.cross_attn3 = WindowCrossAttention(channels, window_size=feat_map_size//4, num_heads=1, dtype=dtype) # only 1 window: not swinT
+        self.cross_block1 = SwinCrossBlock(channels, window_size=feat_map_size//4, shift_size=0, dtype=dtype) # only 1 window: not swinT
+        self.cross_block2 = SwinCrossBlock(channels, window_size=feat_map_size//4, shift_size=0, dtype=dtype) # only 1 window: not swinT
+        self.cross_block3 = SwinCrossBlock(channels, window_size=feat_map_size//4, shift_size=0, dtype=dtype) # only 1 window: not swinT
+        self.final_gn = nn.GroupNorm(num_groups=num_groups, num_channels=channels, dtype=dtype)
+        self.silu = nn.SiLU()
+        self.final_conv = nn.Conv2d(channels, channels, 1, stride=1, padding=0, bias=True, dtype=dtype)
         nn.init.kaiming_normal_(self.down_conv1.weight, mode='fan_out', nonlinearity='relu')
         nn.init.kaiming_normal_(self.down_conv2.weight, mode='fan_out', nonlinearity='relu')
         nn.init.kaiming_normal_(self.up_conv1.weight, mode='fan_out', nonlinearity='relu')
         nn.init.kaiming_normal_(self.up_conv2.weight, mode='fan_out', nonlinearity='relu')
-
+        nn.init.kaiming_normal_(self.final_conv.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.constant_(self.final_conv.bias, 0)
+        nn.init.constant_(self.final_gn.weight, 1)
+        nn.init.constant_(self.final_gn.bias, 0)
 
     def forward(self, x):
         """
@@ -64,13 +70,12 @@ class CostVolumeRefiner(L.LightningModule):
 
         # bottleneck
         h3 = patchify(h3.reshape(b, k, self.channels, h//4, w//4)) # [B*K, K=(src|tgt), H//16, W//16, 128]
-        h_src = h3[:, 0, :, :, :].reshape(b*k, h//4 * w//4, self.channels) # [B*K, H//16, W//16, 128]
-        h_tgt = h3[:, 1:, :, :, :].reshape(b*k, (k-1) * h//4 * w//4, self.channels) # [B*K, K-1, H//16, W//16, 128]
-        h_src = self.self_attn(h_src)
-        h_src = self.cross_attn1(h_src, h_tgt)
-        h_src = self.cross_attn2(h_src, h_tgt)
-        h_src = self.cross_attn3(h_src, h_tgt) # [B*K, H//16*W//16, 128]
-        h3 = h_src.permute(0, 2, 1).reshape(b*k, self.channels, h//4, w//4) # [B*K, 128, H//16, W//16]
+        h_src = h3[:, 0, :, :, :].reshape(b*k, h//4, w//4, self.channels) # [B*K, H//16, W//16, 128]
+        h_tgt = h3[:, 1:, :, :, :].reshape(b*k, (k-1), h//4, w//4, self.channels) # [B*K, K-1, H//16, W//16, 128]
+        h_src = self.cross_block1(h_src, h_tgt)
+        h_src = self.cross_block2(h_src, h_tgt)
+        h_src = self.cross_block3(h_src, h_tgt) # [B*K, H//16, W//16, 128]
+        h3 = h_src.permute(0, 3, 1, 2) # [B*K, 128, H//16, W//16]
 
         # decoder
         h4 = self.up_conv1(h3) # [B*K, 128, H//8, W//8]
@@ -81,5 +86,8 @@ class CostVolumeRefiner(L.LightningModule):
         h5 = torch.cat([h1, h5], dim=1) # [B*K, 256, H//4, W//4]
         out = self.res_dec2_1(h5) # [B*K, 128, H//4, W//4]
         out = self.res_dec2_2(out) # [B*K, 128, H//4, W//4]
+        out = self.final_gn(out)
+        out = self.silu(out)
+        out = self.final_conv(out)
         out = out.permute(0, 2, 3, 1).reshape(b, k, h, w, self.channels) # [B, K, H//4, W//4, 128]
         return out
