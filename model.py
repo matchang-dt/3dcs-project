@@ -172,6 +172,7 @@ class MVSplat(nn.Module):
             images=context_images,
             features=features,
         )
+        depth_maps = torch.clamp(depth_maps, min=batch['near_plane'], max=batch['far_plane'])
 
         depth_probs = torch.softmax(cost_volume, dim=-1)
         depth_conf = depth_probs.max(dim=-1)[0]

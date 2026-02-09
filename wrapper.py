@@ -10,6 +10,7 @@ import lightning as L
 import numpy as np
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
+from torchvision.utils import make_grid
 
 from model import MVSplat, MVSplatConfig
 from lpips import LPIPS
@@ -224,8 +225,8 @@ class MVSplatWrapper(L.LightningModule):
     
     def log_images(self, batch: Dict[str, Any], outputs: Dict[str, torch.Tensor]):
         """
-        Log images for all target views in the first batch (WandB or TensorBoard).
-        Depth and diff maps use jet colormap (blue=low, red=high). All images are 3D [3, H, W].
+        Log images for the first batch: stitched grids of renders, targets, and context (input) images.
+        Depth and diff grids use jet colormap (blue=low, red=high). All images are [3, H, W].
         """
         if self.logger is None:
             return
@@ -253,57 +254,94 @@ class MVSplatWrapper(L.LightningModule):
             if num_views == 0:
                 return
 
-            # Depth only when we have rendered_depth (do not use depth_maps; they are per context view, not target)
+            # Context (input) images: [B, V_ctx, 3, H, W]
+            context_images = batch["context"]["images"]
+            if context_images.ndim == 5:
+                context_b0 = context_images[0]  # [V_ctx, 3, H, W]
+            else:
+                context_b0 = context_images.unsqueeze(0) if context_images.ndim == 4 else context_images
+            num_context = context_b0.shape[0]
+
+            # Stitch into grids (nrow caps columns for a compact layout)
+            nrow = min(4, max(1, num_views))
+            rendered_grid = make_grid(
+                rendered_b0.clamp(0.0, 1.0).float(),
+                nrow=nrow,
+                padding=4,
+                normalize=False,
+            )
+            target_grid = make_grid(
+                target_b0.clamp(0.0, 1.0).float(),
+                nrow=nrow,
+                padding=4,
+                normalize=False,
+            )
+            context_nrow = min(4, max(1, num_context))
+            context_grid = make_grid(
+                context_b0.clamp(0.0, 1.0).float(),
+                nrow=context_nrow,
+                padding=4,
+                normalize=False,
+            )
+
+            # Depth only when we have rendered_depth
             has_depth = "rendered_depth" in outputs and outputs["rendered_depth"] is not None
+            depth_grid = None
             if has_depth:
                 d = outputs["rendered_depth"]
                 depth_b0 = d[0] if d.ndim == 4 else d  # [V, H, W]
                 depth_global_max = depth_b0.max() + 1e-6
-                depth_views = depth_b0.shape[0]
-            else:
-                depth_views = 0
+                depth_vis = (depth_b0 / depth_global_max).clamp(0, 1)
+                depth_jet_list = [_apply_jet_cmap(depth_vis[v]) for v in range(depth_vis.shape[0])]
+                depth_stack = torch.stack(depth_jet_list, dim=0)  # [V, 3, H, W]
+                depth_grid = make_grid(depth_stack, nrow=nrow, padding=4, normalize=False)
 
-            list_rendered = []
-            list_target = []
-            list_depth_jet = []
-            list_diff_jet = []
-            captions_rendered = []
-            captions_target = []
-            captions_depth = []
-            captions_diff = []
-
+            # Diff grid (rendered vs target)
+            diff_list = []
             for v in range(num_views):
-                r_v = torch.clamp(rendered_b0[v], 0, 1).float()
-                t_v = torch.clamp(target_b0[v], 0, 1).float()
+                r_v = rendered_b0[v].clamp(0, 1).float()
+                t_v = target_b0[v].clamp(0, 1).float()
                 diff_v = (r_v - t_v).abs().mean(dim=0)
-                diff_jet_v = _apply_jet_cmap(diff_v)
+                diff_list.append(_apply_jet_cmap(diff_v))
+            diff_stack = torch.stack(diff_list, dim=0)  # [V, 3, H, W]
+            diff_grid = make_grid(diff_stack, nrow=nrow, padding=4, normalize=False)
 
-                list_rendered.append(ensure_3ch(r_v))
-                list_target.append(ensure_3ch(t_v))
-                list_diff_jet.append(diff_jet_v)
-                captions_rendered.append(f"view{v}")
-                captions_target.append(f"view{v}")
-                captions_diff.append(f"view{v}")
-
-                if has_depth and v < depth_views:
-                    depth_v = (depth_b0[v] / depth_global_max).clamp(0, 1)
-                    list_depth_jet.append(_apply_jet_cmap(depth_v))
-                    captions_depth.append(f"view{v}")
-
+            # Log stitched grids
+            step = self.global_step
             if isinstance(self.logger, WandbLogger):
-                self.logger.log_image(key="val/rendered", images=list_rendered, caption=captions_rendered)
-                self.logger.log_image(key="val/target", images=list_target, caption=captions_target)
-                if list_depth_jet:
-                    self.logger.log_image(key="val/depth_jet", images=list_depth_jet, caption=captions_depth)
-                self.logger.log_image(key="val/diff_jet", images=list_diff_jet, caption=captions_diff)
+                self.logger.log_image(
+                    key="val/rendered_grid",
+                    images=[rendered_grid.cpu().permute(1, 2, 0).numpy()],
+                    caption=["rendered (all target views)"],
+                )
+                self.logger.log_image(
+                    key="val/target_grid",
+                    images=[target_grid.cpu().permute(1, 2, 0).numpy()],
+                    caption=["target (all target views)"],
+                )
+                self.logger.log_image(
+                    key="val/context_grid",
+                    images=[context_grid.cpu().permute(1, 2, 0).numpy()],
+                    caption=["context (input views)"],
+                )
+                self.logger.log_image(
+                    key="val/diff_grid",
+                    images=[diff_grid.cpu().permute(1, 2, 0).numpy()],
+                    caption=["|rendered - target| (jet)"],
+                )
+                if depth_grid is not None:
+                    self.logger.log_image(
+                        key="val/depth_grid",
+                        images=[depth_grid.cpu().permute(1, 2, 0).numpy()],
+                        caption=["rendered depth (jet)"],
+                    )
             elif hasattr(self.logger.experiment, "add_image"):
-                step = self.global_step
-                for v in range(num_views):
-                    self.logger.experiment.add_image(f"val/rendered_view{v}", list_rendered[v], step)
-                    self.logger.experiment.add_image(f"val/target_view{v}", list_target[v], step)
-                    self.logger.experiment.add_image(f"val/diff_jet_view{v}", list_diff_jet[v], step)
-                for v, img in enumerate(list_depth_jet):
-                    self.logger.experiment.add_image(f"val/depth_jet_view{v}", img, step)
+                self.logger.experiment.add_image("val/rendered_grid", rendered_grid, step)
+                self.logger.experiment.add_image("val/target_grid", target_grid, step)
+                self.logger.experiment.add_image("val/context_grid", context_grid, step)
+                self.logger.experiment.add_image("val/diff_grid", diff_grid, step)
+                if depth_grid is not None:
+                    self.logger.experiment.add_image("val/depth_grid", depth_grid, step)
         except Exception as e:
             print(f"Warning: Error logging images: {e}")
     
