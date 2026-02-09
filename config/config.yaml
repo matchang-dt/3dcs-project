@@ -1,0 +1,19 @@
+defaults:
+  - model: mvsplat_wrapper
+  - dataset@train_dataset: dummy_data
+  - dataset@val_dataset: dummy_data
+  - _self_
+
+learning_rate: 1e-4
+epochs: 30
+
+wandb:
+  project: "my-3dcsplat-project"
+  id: null
+
+training:
+  lr: 0.001
+  train_batch_size: 4
+  val_batch_size: 4
+  log_interval: 10
+  num_image_log: 2

@@ -79,10 +79,10 @@ class ResBlock4UNet(L.LightningModule):
         self.silu = nn.SiLU()
         self.gn1 = nn.GroupNorm(num_groups=num_groups1, num_channels=in_channels, dtype=dtype)
         self.gn2 = nn.GroupNorm(num_groups=num_groups2, num_channels=out_channels, dtype=dtype)
-        nn.init.kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.kaiming_normal_(self.conv2.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.xavier_normal_(self.conv1.weight)
+        nn.init.xavier_normal_(self.conv2.weight)
         nn.init.constant_(self.gn1.weight, 1)
-        nn.init.constant_(self.gn2.weight, 1)
+        nn.init.constant_(self.gn2.weight, 0)
         nn.init.constant_(self.gn1.bias, 0)
         nn.init.constant_(self.gn2.bias, 0)
 
