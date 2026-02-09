@@ -199,7 +199,7 @@ def main(cfg: DictConfig):
     trainer = L.Trainer(
         max_steps=cfg.max_steps,
         accelerator='auto',
-        devices=1,
+        devices=cfg.num_gpus,
         precision=cfg.precision,
         callbacks=[checkpoint_callback, lr_monitor],
         logger=logger,
@@ -220,4 +220,7 @@ def main(cfg: DictConfig):
 
 
 if __name__ == '__main__':
+    import os
+    os.environ.setdefault("WANDB_API_KEY", "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")
+    os.environ.setdefault("WANDB_MODE", "online")
     main()
