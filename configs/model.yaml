@@ -16,7 +16,7 @@ max_depth: 100.0
 feature_dim: 128
 
 # Gaussian head
-gaussian_head_channels: 132
+gaussian_head_channels: 132 # 128 (features) + 4 (RGB + depth)
 opacity_start: 0.5
 opacity_end: 2.0
 opacity_warmup: 10000

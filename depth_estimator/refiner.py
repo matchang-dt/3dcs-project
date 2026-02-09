@@ -2,8 +2,8 @@ import lightning as L
 import torch
 from torch import nn
 
-from extractor import WindowSelfAttention, WindowCrossAttention, patchify
-from cost_volume_constructor import ResBlock4UNet
+from utils import WindowSelfAttention, WindowCrossAttention, patchify
+from utils import ResBlock4UNet
 
 
 class DepthRefiner(L.LightningModule):

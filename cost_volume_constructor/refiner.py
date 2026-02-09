@@ -2,7 +2,7 @@ import lightning as L
 import torch
 from torch import nn
 
-from extractor import WindowSelfAttention, WindowCrossAttention, patchify
+from utils import WindowSelfAttention, WindowCrossAttention, patchify
 
 
 class ResBlock4UNet(L.LightningModule):
