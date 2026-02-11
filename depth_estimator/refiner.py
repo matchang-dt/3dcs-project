@@ -3,9 +3,15 @@ import torch
 from torch import nn
 
 from utils import SwinCrossBlock, ResBlock4UNet, patchify
+from utils import SwinCrossBlock, ResBlock4UNet, patchify
 
 
 class DepthRefiner(L.LightningModule):
+    """
+    Depth refiner module.
+    Refines the depth map with the features and the images by a U-net based refiner.
+    U-Net of 4 stages, transformer blocks in the bottleneck.
+    """
     """
     Depth refiner module.
     Refines the depth map with the features and the images by a U-net based refiner.
@@ -19,10 +25,18 @@ class DepthRefiner(L.LightningModule):
             feat_map_size (int): size of the feature map
             dtype (torch.dtype): data type
         """
+        """
+        Initialize the DepthRefiner.
+        Args:
+            channels (int): number of channels for the features
+            feat_map_size (int): size of the feature map
+            dtype (torch.dtype): data type
+        """
         assert feat_map_size % 16 == 0
         super().__init__()
         self.to(dtype)
         self.channels = channels
+        num_groups = channels // 16
         num_groups = channels // 16
         self.in_conv = nn.Conv2d(channels+4, channels, 3, stride=1, padding=1, bias=False, dtype=dtype)
         self.res_enc1_1 = ResBlock4UNet(channels, channels, dtype)
@@ -55,6 +69,12 @@ class DepthRefiner(L.LightningModule):
         self.final_gn = nn.GroupNorm(num_groups=num_groups, num_channels=channels, dtype=dtype)
         self.silu = nn.SiLU()
         self.final_conv = nn.Conv2d(channels, 1, kernel_size=1, stride=1, padding=0, bias=True, dtype=dtype) # ch 128 -> 1
+        self.cross_block1 = SwinCrossBlock(channels, window_size=feat_map_size//16, shift_size=0, dtype=dtype) # only 1 window: not swinT
+        self.cross_block2 = SwinCrossBlock(channels, window_size=feat_map_size//16, shift_size=0, dtype=dtype) # only 1 window: not swinT
+        self.cross_block3 = SwinCrossBlock(channels, window_size=feat_map_size//16, shift_size=0, dtype=dtype) # only 1 window: not swinT
+        self.final_gn = nn.GroupNorm(num_groups=num_groups, num_channels=channels, dtype=dtype)
+        self.silu = nn.SiLU()
+        self.final_conv = nn.Conv2d(channels, 1, kernel_size=1, stride=1, padding=0, bias=True, dtype=dtype) # ch 128 -> 1
 
         nn.init.kaiming_normal_(self.in_conv.weight, mode='fan_out', nonlinearity='relu')
         nn.init.kaiming_normal_(self.down_conv1.weight, mode='fan_out', nonlinearity='relu')
@@ -69,8 +89,19 @@ class DepthRefiner(L.LightningModule):
         nn.init.constant_(self.final_conv.bias, 0)
         nn.init.constant_(self.final_gn.weight, 1)
         nn.init.constant_(self.final_gn.bias, 0)
+        nn.init.xavier_normal_(self.final_conv.weight)
+        nn.init.constant_(self.final_conv.bias, 0)
+        nn.init.constant_(self.final_gn.weight, 1)
+        nn.init.constant_(self.final_gn.bias, 0)
 
     def forward(self, x):
+        """
+        Forward pass of the DepthRefiner.
+        Args:
+            x (torch.Tensor): input tensor of shape [B, K, H, W, d (128 + 4)] 128: upsampled features, 3: images, 1: depth map
+        Returns:
+            out (torch.Tensor): output tensor of shape [B, K, H, W]
+        """
         """
         Forward pass of the DepthRefiner.
         Args:
@@ -125,6 +156,9 @@ class DepthRefiner(L.LightningModule):
         h9 = torch.cat([h1, h9], dim=1) # [B*K, 256, H, W]
         h9 = self.res_dec4_1(h9) # [B*K, 128, H, W]
         h9 = self.res_dec4_2(h9) # [B*K, 128, H, W]
+        out = self.final_gn(h9) # [B*K, 128, H, W]
+        out = self.silu(out)
+        out = self.final_conv(out) # [B*K, 1, H, W]
         out = self.final_gn(h9) # [B*K, 128, H, W]
         out = self.silu(out)
         out = self.final_conv(out) # [B*K, 1, H, W]

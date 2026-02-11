@@ -1,0 +1,19 @@
+# RE10K Dataset Configuration
+# Training split
+
+_target_: datasets.dataset.DatasetCfg
+
+name: re10k
+data_root: /workspace/re10kvol/re10k
+stage: train
+
+# View sampling configuration
+num_input_views: 2
+num_target_views: 4
+
+# Image configuration
+target_image_size: 256
+
+# Training schedule
+max_train_steps: 300000  # Baseline expansion over 300k steps
+

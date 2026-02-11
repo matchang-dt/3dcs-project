@@ -1,0 +1,30 @@
+# @package _global_
+# Model parameters (merged at root when composed with config.yaml)
+
+# Extractor
+image_size: 256
+hidden_dim: 128
+swin_divisions: 2
+
+# Data types
+cnn_dtype: float32
+transformer_dtype: float32
+pipeline_dtype: float32
+
+# Cost volume
+max_depth: 100.0
+feature_dim: 128
+
+# Gaussian head
+gaussian_head_channels: 132 # 128 (features) + 4 (RGB + depth)
+opacity_start: 0.5
+opacity_end: 2.0
+opacity_warmup: 10000
+
+# Gaussian adapter
+sh_degree: 4
+scale_min: 0.01
+scale_max: 100.0
+gaussian_scale_pct: 0.1
+gaussians_per_pixel: 1
+num_surfaces: 1

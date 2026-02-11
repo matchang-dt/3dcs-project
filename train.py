@@ -1,0 +1,226 @@
+"""
+Hydra + Lightning training script for MVSplat.
+
+Usage:
+    python train.py                                    # Use default config
+    python train.py dataset=datasets/re10k_test        # Override dataset
+    python train.py batch_size=4                       # Override training params
+    python train.py max_depth=50.0                     # Override model params
+"""
+import os
+import torch
+import torch.nn.functional as F
+import lightning as L
+from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
+from torch.utils.data import DataLoader
+import hydra
+from omegaconf import DictConfig, OmegaConf
+
+from model import MVSplatConfig
+from wrapper import MVSplatWrapper, LightningConfig
+from decoder.decoder_cuda_splatting_gaussians import DecoderGaussianSplattingCUDACfg
+from datasets.dataset import DatasetCfg
+from datasets.dataset_re10k import Re10kDataset
+
+
+def create_model_from_hydra_config(cfg: DictConfig) -> MVSplatWrapper:
+    """
+    Create MVSplat Lightning wrapper from Hydra config.
+    
+    Args:
+        cfg: Hydra DictConfig with model and training parameters
+        
+    Returns:
+        MVSplatWrapper ready for training
+    """
+    # Create decoder config
+    decoder_cfg = DecoderGaussianSplattingCUDACfg(name="cuda_gaussian_splatting")
+    
+    # Convert dtype strings to torch dtypes
+    dtype_map = {
+        'float32': torch.float32,
+        'float16': torch.float16,
+        'bfloat16': torch.bfloat16,
+    }
+    
+    # Create model config
+    model_config = MVSplatConfig(
+        image_size=cfg.image_size,
+        hidden_dim=cfg.hidden_dim,
+        swin_divisions=cfg.swin_divisions,
+        cnn_dtype=dtype_map.get(cfg.cnn_dtype, torch.float32),
+        transformer_dtype=dtype_map.get(cfg.transformer_dtype, torch.bfloat16),
+        pipeline_dtype=dtype_map.get(cfg.pipeline_dtype, torch.float32),
+        max_depth=cfg.max_depth,
+        feature_dim=cfg.feature_dim,
+        gaussian_head_channels=cfg.gaussian_head_channels,
+        opacity_start=cfg.opacity_start,
+        opacity_end=cfg.opacity_end,
+        opacity_warmup=cfg.opacity_warmup,
+        sh_degree=cfg.sh_degree,
+        scale_min=cfg.scale_min,
+        scale_max=cfg.scale_max,
+        gaussian_scale_pct=cfg.gaussian_scale_pct,
+        gaussians_per_pixel=cfg.gaussians_per_pixel,
+        num_surfaces=cfg.num_surfaces,
+        decoder_cfg=decoder_cfg,
+        dataset_cfg=None,
+    )
+    
+    # Create Lightning config
+    lightning_config = LightningConfig(
+        optimizer_name=cfg.optimizer.name,
+        learning_rate=cfg.optimizer.lr,
+        weight_decay=cfg.optimizer.weight_decay,
+        betas=tuple(cfg.optimizer.betas),
+        scheduler_name=cfg.scheduler.name,
+        scheduler_T_max=cfg.scheduler.T_max,
+        scheduler_eta_min=cfg.scheduler.eta_min,
+        warmup_steps=cfg.scheduler.warmup_steps,
+        rgb_loss_weight=cfg.loss.rgb_loss_weight,
+        lpips_loss_weight=cfg.loss.lpips_loss_weight,
+    )
+    
+    # Create and return Lightning wrapper
+    return MVSplatWrapper(model_config, lightning_config)
+
+
+def collate_fn(batch):
+    """Custom collate function for IterableDataset."""
+    # batch is a list of dicts from the dataset
+    # Each dict has 'context' and 'target' subdicts
+    
+    if len(batch) == 0:
+        return None
+    
+    # Filter batch for consistent target view counts
+    # Sometimes view sampler returns different number of target views (e.g. at end of epoch or edge cases)
+    # We enforce that all items in the batch must have the same number of target views as the first item
+    if len(batch) > 0:
+        ref_shape = batch[0]['target']['images'].shape[0]
+        valid_indices = [i for i, item in enumerate(batch) if item['target']['images'].shape[0] == ref_shape]
+        
+        if len(valid_indices) < len(batch):
+            # print(f"Warning: Dropped {len(batch) - len(valid_indices)} items with inconsistent target views")
+            batch = [batch[i] for i in valid_indices]
+            
+    if len(batch) == 0:
+        return None
+    
+    # Stack context views
+    context_images = torch.stack([item['context']['images'] for item in batch])
+    context_intrinsics = torch.stack([item['context']['intrinsics'] for item in batch])
+    context_extrinsics = torch.stack([item['context']['extrinsics'] for item in batch])
+    
+    # Stack target views
+    target_images = torch.stack([item['target']['images'] for item in batch])
+    target_intrinsics = torch.stack([item['target']['intrinsics'] for item in batch])
+    target_extrinsics = torch.stack([item['target']['extrinsics'] for item in batch])
+    
+    return {
+        'context': {
+            'images': context_images,
+            'intrinsics': context_intrinsics,
+            'extrinsics': context_extrinsics,
+        },
+        'target': {
+            'images': target_images,
+            'intrinsics': target_intrinsics,
+            'extrinsics': target_extrinsics,
+        },
+        'scene_key': [item['scene_key'] for item in batch],
+        'near_plane': batch[0].get('near_plane', 0.1),
+        'far_plane': batch[0].get('far_plane', 100.0),
+    }
+
+
+@hydra.main(version_base=None, config_path="configs", config_name="config")
+def main(cfg: DictConfig):
+    """Main training function."""
+    
+    # Print config
+    print("=" * 80)
+    print("Training Configuration:")
+    print("=" * 80)
+    print(OmegaConf.to_yaml(cfg))
+    print("=" * 80)
+    
+    # Set seed
+    L.seed_everything(cfg.seed, workers=True)
+    
+    # Create datasets
+    print("\nCreating datasets...")
+    train_dataset = Re10kDataset(
+        data_root=cfg.dataset.data_root,
+        stage='train',
+        num_input_views=cfg.dataset.num_input_views,
+        num_target_views=cfg.dataset.num_target_views,
+        target_image_size=(cfg.dataset.target_image_size, cfg.dataset.target_image_size),
+        max_train_steps=cfg.dataset.max_train_steps,
+    )
+    
+    # Create dataloaders
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=cfg.batch_size,
+        num_workers=cfg.num_workers,
+        collate_fn=collate_fn,
+        pin_memory=True,
+    )
+    
+    print(f"Train dataset created")
+    
+    # Create model
+    print("\nCreating model...")
+    model = create_model_from_hydra_config(cfg)
+    print(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters")
+    
+    # Setup callbacks
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=cfg.checkpoint.dirpath,
+        filename=cfg.checkpoint.filename,
+        monitor=cfg.checkpoint.monitor,
+        mode=cfg.checkpoint.mode,
+        save_top_k=cfg.checkpoint.save_top_k,
+        save_last=cfg.checkpoint.save_last,
+        every_n_train_steps=cfg.val_check_interval,
+    )
+    
+    lr_monitor = LearningRateMonitor(logging_interval='step')
+    
+    # Setup logger
+    logger = WandbLogger(
+        save_dir='logs/',
+        name=cfg.experiment_name,
+    )
+    
+    # Create trainer
+    trainer = L.Trainer(
+        max_steps=cfg.max_steps,
+        accelerator='auto',
+        devices=cfg.num_gpus,
+        precision=cfg.precision,
+        callbacks=[checkpoint_callback, lr_monitor],
+        logger=logger,
+        log_every_n_steps=cfg.log_every_n_steps,
+        val_check_interval=cfg.val_check_interval,
+        gradient_clip_val=cfg.gradient_clip_val,
+        deterministic=False,
+    )
+    
+    # Train
+    print("\nStarting training...")
+    print(f"Logs will be saved to: {logger.log_dir}")
+    print(f"Checkpoints will be saved to: {cfg.checkpoint.dirpath}")
+
+    trainer.fit(model, train_loader)
+
+    print("\nTraining complete!")
+
+
+if __name__ == '__main__':
+    import os
+    os.environ.setdefault("WANDB_API_KEY", "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")
+    os.environ.setdefault("WANDB_MODE", "online")
+    main()

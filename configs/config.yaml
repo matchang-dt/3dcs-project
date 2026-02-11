@@ -1,0 +1,19 @@
+# Main configuration file for MVSplat training.
+# Compose model, dataset, and train configs. Model and train are merged at root via @package _global_.
+
+defaults:
+  - model
+  - dataset: re10k_train
+  - train
+  - _self_
+
+# Experiment
+experiment_name: mvsplat_re10k
+seed: 42
+
+# Hydra run directory
+hydra:
+  run:
+    dir: outputs/${experiment_name}/${now:%Y-%m-%d_%H-%M-%S}
+  job:
+    chdir: false
