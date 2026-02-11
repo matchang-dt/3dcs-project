@@ -54,13 +54,19 @@ def cost_volume_construct(P_src, P_tgt, f_src, f_tgt, volume_grids, max_depth):
     f_src = f_src.unsqueeze(-2).expand(b, k, h, w, d, c) # [B, K, h, w, d, c]
     f_tgt = f_tgt.unsqueeze(-2).expand(b, k, k - 1, h, w, d, c) # [B, K, K - 1, h, w, d, c]
     P_tgt_inv = torch.linalg.inv(P_tgt) # [B, K, K - 1, 4, 4]
+    assert torch.isfinite(P_tgt_inv).all(), "P_tgt_inv is not finite"
     P_merged = torch.einsum('bkmn,bklno->bklmo', P_src, P_tgt_inv) # [B, K, K - 1, 4, 4]
+    assert torch.isfinite(P_merged).all(), "P_merged is not finite"
     warped = torch.einsum('bklij,hwdj->bklhwdi', P_merged, volume_grids) # [B, K, K - 1, h, w, d, 4]
-    warped_uv = (warped[..., :2] / warped[..., 2:3] + 1) / 2 # [B, K, K - 1, h, w, d, 2]
+    assert torch.isfinite(warped).all(), "warped is not finite"
+    warped_uv = (warped[..., :2] / (warped[..., 2:3] + eps) + 1) / 2 # [B, K, K - 1, h, w, d, 2]
+    assert torch.isfinite(warped_uv).all(), "warped_uv is not finite"
     warped_ij = warped_uv * torch.tensor([h, w], device=device, dtype=warped_uv.dtype) - 0.5 # [B, K, K - 1, h, w, d, 2]
+    assert torch.isfinite(warped_ij).all(), "warped_ij is not finite"
     warped_ij = warped_ij.round().long() # [B, K, K - 1, h, w, d, 2]
     warped_depth = warped[..., 2:3] # [B, K, K - 1, h, w, d, 1]
     warped_inv_depth = (max_depth / (warped_depth + eps)).round().long() # [B, K, K - 1, h, w, d, 1]
+    assert torch.isfinite(warped_inv_depth).all(), "warped_inv_depth is not finite"
     warped_grids = torch.cat([warped_ij, warped_inv_depth - 1], dim=-1) # [B, K, K - 1, h, w, d, 3]
     grid_b = torch.arange(b, device=device).reshape(b, 1, 1, 1, 1, 1).expand(b, k, k - 1, h, w, d) # [B, K, K - 1, h, w, d]
     grid_k = torch.arange(k, device=device).reshape(1, k, 1, 1, 1, 1).expand(b, k, k - 1, h, w, d) # [B, K, K - 1, h, w, d]
@@ -69,20 +75,23 @@ def cost_volume_construct(P_src, P_tgt, f_src, f_tgt, volume_grids, max_depth):
     idx_d = warped_grids[..., 2] # [B, K, K - 1, h, w, d]
     mask = ((idx_i >= 0) & (idx_i < h) & (idx_j >= 0) & 
             (idx_j < w) & (idx_d >= 0) & (idx_d < d)) # [B, K, K - 1, h, w, d]
+    assert torch.isfinite(mask).all(), "mask is not finite"
     indices = (
         grid_b[mask], grid_k[mask], idx_i[mask], idx_j[mask], idx_d[mask],
     ) # ([B * K * (K - 1) * h * w * d],) * 5
     f_tgt = f_tgt[mask] # [B * K * (K - 1) * h * w * d, c]
-
+    assert torch.isfinite(f_tgt).all(), "f_tgt is not finite"
     warped_feat_values = torch.zeros(b, k, h, w, d, c, dtype=f_tgt.dtype, device=device)
     warped_feat_counts = torch.zeros(b, k, h, w, d, dtype=f_tgt.dtype, device=device)
     warped_feat = torch.zeros(b, k, h, w, d, c, dtype=f_tgt.dtype, device=device)
     warped_feat_values.index_put_(indices, f_tgt, accumulate=True) # [B, K, h, w, d, c]
+    assert torch.isfinite(warped_feat_values).all(), "warped_feat_values is not finite"
     warped_feat_counts.index_put_(
         indices,
         torch.ones((indices[0].shape[0],), dtype=warped_feat_counts.dtype, device=device),
         accumulate=True,
     ) # [B, K, h, w, d]
+    assert torch.isfinite(warped_feat_counts).all(), "warped_feat_counts is not finite"
     non_zero_mask = warped_feat_counts > 0
     warped_feat[non_zero_mask] = (
         warped_feat_values[non_zero_mask] / 
@@ -150,9 +159,12 @@ class CostVolumeConstructor(L.LightningModule):
             self.volume_grids, 
             self.max_depth
         ) # [B, K, H//4, W//4, 128]
+        assert torch.isfinite(cost_volumes).all(), "cost_volumes is not finite"
         refine_input = torch.cat([cost_volumes, features], dim=-1) # [B, K, H//4, W//4, 256]
         cost_volume_residuals = self.refiner(refine_input) # [B, K, H//4, W//4, 128]
+        assert torch.isfinite(cost_volume_residuals).all(), "cost_volume_residuals is not finite"
         cost_volumes = cost_volumes + cost_volume_residuals # [B, K, H//4, W//4, 128]
+        assert torch.isfinite(cost_volumes).all(), "cost_volumes is not finite"
         # upsample the cost volume to the original image size
         cost_volumes = cost_volumes.permute(0, 1, 4, 2, 3).reshape(b * k, self.feature_dim, h, w) # [B * K, 128, H//4, W//4]
         cost_volumes = self.up_conv1(cost_volumes) # [B * K, 128, H//2, W//2]
@@ -163,4 +175,5 @@ class CostVolumeConstructor(L.LightningModule):
         cost_volumes = self.silu(cost_volumes) # [B * K, 128, H, W]
         cost_volumes = self.last_conv(cost_volumes) # [B * K, 128, H, W]
         cost_volumes = cost_volumes.reshape(b, k, self.feature_dim, h*4, w*4).permute(0, 1, 3, 4, 2) # [B, K, H, W, 128]
+        assert torch.isfinite(cost_volumes).all(), "cost_volumes is not finite"
         return cost_volumes # [B, K, H, W, 128]

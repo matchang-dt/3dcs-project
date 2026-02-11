@@ -96,6 +96,7 @@ class DepthRefiner(L.LightningModule):
         h4 = self.res_enc4_1(h4)
         h4 = self.res_enc4_2(h4)
         h5 = self.down_conv4(h4) # [B*K, 128, H//16, W//16]
+        assert torch.isfinite(h5).all(), "h5 in depth refiner is not finite"
 
         # bottleneck
         h5 = patchify(h5.reshape(b, k, self.channels, H//16, W//16)) # [B*K, K=(src|tgt), H//16, W//16, 128]
@@ -105,6 +106,7 @@ class DepthRefiner(L.LightningModule):
         h_src = self.cross_block2(h_src, h_tgt)
         h_src = self.cross_block3(h_src, h_tgt) # [B*K, H//16, W//16, 128]
         h5 = h_src.permute(0, 3, 1, 2) # [B*K, 128, H//16, W//16]
+        assert torch.isfinite(h5).all(), "h5 in depth refiner bottleneck is not finite"
 
         # decoder
         h6 = self.up_conv1(h5) # [B*K, 128, H//8, W//8]
