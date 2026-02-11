@@ -1,7 +1,0 @@
-_target_: datasets.dummy.DummyDataset
-
-data_path: data/dummy_data.json
-
-Loader:
-  batch_size: 14
-  shuffle: False

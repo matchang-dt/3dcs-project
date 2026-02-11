@@ -1,9 +1,0 @@
-_target_: models.mvsplat_wrapper.MVSPlatWrapper
-
-hiddem_dim: 128
-image_h: 256
-image_w: 256
-max_depth: 100
-depth_steps: 128
-swin_divisions: 2
-dtype: torch.float32
