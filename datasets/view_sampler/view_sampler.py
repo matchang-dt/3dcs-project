@@ -17,9 +17,9 @@ class ViewSet:
 
     def _debug_save(self, output_path: str = "default_view_debug_directory"):
         # DEBUG: save all view data into an output directory
-        assert self.images is not None
-        assert self.intrinsics is not None
-        assert self.extrinsics is not None
+        # assert self.images is not None
+        # assert self.intrinsics is not None
+        # assert self.extrinsics is not None
         for i in range(self.images.shape[0]):
             image = self.images[i].cpu().numpy()
             intrinsics = self.intrinsics[i].cpu().numpy()

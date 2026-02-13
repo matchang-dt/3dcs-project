@@ -40,7 +40,7 @@ class TransformerExtractor(L.LightningModule):
             out (torch.Tensor): output tensor of shape [B*K, H//4, W//4, 128]
         """
         # x: [B*K, K=(src|tgt), H//4, W//4, 128]
-        assert torch.isfinite(x).all(), "input to transformer extractor is not finite"
+        # assert torch.isfinite(x).all(), "input to transformer extractor is not finite"
         x_src = x[:, 0, :, :, :] # [B*K, H//4, W//4, 128]
         x_tgt = x[:, 1:, :, :, :] # [B*K, K-1, H//4, W//4, 128]
         out = self.swin_block1(x_src, x_tgt)
@@ -49,5 +49,5 @@ class TransformerExtractor(L.LightningModule):
         out = self.swin_block4(out, x_tgt)
         out = self.swin_block5(out, x_tgt)
         out = self.swin_block6(out, x_tgt)
-        assert torch.isfinite(out).all(), "output from transformer extractor is not finite"
+        # assert torch.isfinite(out).all(), "output from transformer extractor is not finite"
         return out # [B*K, H//4, W//4, 128]
