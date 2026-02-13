@@ -6,7 +6,7 @@ import lightning as L
 from .refiner import DepthRefiner
 
 
-def depth_estimate(cost_volume, max_depth):
+def inv_depth_estimate(cost_volume, max_depth):
     """
     Estimate the depth map from the cost volume.
     Args:
@@ -18,14 +18,12 @@ def depth_estimate(cost_volume, max_depth):
     """
     # cost volume: [B, K, H, W, 128]
     b, k, H, W, d = cost_volume.shape
-    depth_prob = torch.softmax(cost_volume, dim=-1)
-    depth_invs = torch.arange(d, device=cost_volume.device) + 1
-    depths = (max_depth / depth_invs).reshape(1, 1, 1, 1, d).expand(b, k, H, W, d) # [B, K, H, W, d (128)]
-    assert torch.isfinite(depth_prob).all(), "depth_prob is not finite"
-    assert torch.isfinite(depths).all(), "depths is not finite"
-    depth_map = torch.einsum('bkHWd,bkHWd->bkHW', depth_prob, depths) # [B, K, H, W]
-    depth_conf = torch.max(depth_prob, dim=-1).values
-    return depth_map, depth_conf # [B, K, H, W], [B, K, H, W] (for gaussian mean, opacity)
+    depth_prob = torch.softmax(cost_volume, dim=-1) # [B, K, H, W, d (128)]
+    inv_depths = torch.arange(d, device=cost_volume.device) + 1
+    inv_depths = inv_depths.reshape(1, 1, 1, 1, d).expand(b, k, H, W, d) # [B, K, H, W, d (128)]
+    inv_depth_map = torch.einsum('bkHWd,bkHWd->bkHW', depth_prob, inv_depths) # [B, K, H, W]
+    depth_conf = torch.max(depth_prob, dim=-1)[0]
+    return inv_depth_map, depth_conf # [B, K, H, W], [B, K, H, W] (for gaussian mean, opacity)
 
 
 class DepthEstimator(L.LightningModule):
@@ -62,14 +60,13 @@ class DepthEstimator(L.LightningModule):
         images = images.reshape(-1, 3, H, W) # [B*K, 3, H, W]
         features = features.reshape(-1, H//4, W//4, d).permute(0, 3, 1, 2) # [B*K, 128, H//4, W//4]
         features = F.interpolate(features, size=(H, W), mode='bilinear', align_corners=False) # [B*K, 128, H, W]
-        depth_map, depth_conf = depth_estimate(cost_volume, self.max_depth) # [B, K, H, W], [B, K, H, W, d (128)]
-        depth_map_usq = depth_map.reshape(-1, H, W).unsqueeze(1) # [B*K, 1, H, W]
-        assert torch.isfinite(depth_map).all(), "depth_map is not finite"
-        assert torch.isfinite(depth_conf).all(), "depth_conf is not finite"
-        
-        refine_inputs = torch.cat([images, features, depth_map_usq], dim=1) # [B*K, 128+4, H, W]
-        refine_inputs = refine_inputs.permute(0, 2, 3, 1).reshape(b, k, H, W, d+4) # [B*K, H, W, 128+4]
-        depth_residual = self.refiner(refine_inputs) # [B, K, H, W]
-        assert torch.isfinite(depth_residual).all(), "depth_residual is not finite"
-        depth_map += depth_residual # [B, K, H, W]
+        inv_depth_map, depth_conf = inv_depth_estimate(cost_volume, self.max_depth) # [B, K, H, W], [B, K, H, W]
+        inv_depth_map_usq = inv_depth_map.reshape(-1, H, W).unsqueeze(1) # [B*K, 1, H, W]
+        depth_conf_usq = depth_conf.reshape(-1, H, W).unsqueeze(1) # [B*K, 1, H, W]
+        refine_inputs = torch.cat([images, features, inv_depth_map_usq, depth_conf_usq], dim=1) # [B*K, 128+5, H, W]
+        refine_inputs = refine_inputs.permute(0, 2, 3, 1).reshape(b, k, H, W, d+4) # [B*K, H, W, 128+5]
+        inv_depth_residual = self.refiner(refine_inputs) # [B, K, H, W]
+        inv_depth_map += inv_depth_residual # [B, K, H, W]
+        depth_map = self.max_depth / inv_depth_map.clamp(min=1e-6) # [B, K, H, W]
+        depth_map = depth_map.clamp(min=0.1, max=self.max_depth) # [B, K, H, W]
         return depth_map, depth_conf # [B, K, H, W], [B, K, H, W]

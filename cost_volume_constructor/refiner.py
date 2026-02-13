@@ -44,7 +44,7 @@ class CostVolumeRefiner(L.LightningModule):
         nn.init.kaiming_normal_(self.down_conv2.weight, mode='fan_out', nonlinearity='relu')
         nn.init.kaiming_normal_(self.up_conv1.weight, mode='fan_out', nonlinearity='relu')
         nn.init.kaiming_normal_(self.up_conv2.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.kaiming_normal_(self.final_conv.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.xavier_normal_(self.final_conv.weight)
         nn.init.constant_(self.final_conv.bias, 0)
         nn.init.constant_(self.final_gn.weight, 1)
         nn.init.constant_(self.final_gn.bias, 0)

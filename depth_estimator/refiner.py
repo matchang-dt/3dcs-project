@@ -37,8 +37,7 @@ class DepthRefiner(L.LightningModule):
         self.to(dtype)
         self.channels = channels
         num_groups = channels // 16
-        num_groups = channels // 16
-        self.in_conv = nn.Conv2d(channels+4, channels, 3, stride=1, padding=1, bias=False, dtype=dtype)
+        self.in_conv = nn.Conv2d(channels+5, channels, 3, stride=1, padding=1, bias=False, dtype=dtype)
         self.res_enc1_1 = ResBlock4UNet(channels, channels, dtype)
         self.res_enc1_2 = ResBlock4UNet(channels, channels, dtype)
         self.down_conv1 = nn.Conv2d(channels, channels, 3, stride=2, padding=1, bias=False, dtype=dtype)
@@ -69,26 +68,16 @@ class DepthRefiner(L.LightningModule):
         self.final_gn = nn.GroupNorm(num_groups=num_groups, num_channels=channels, dtype=dtype)
         self.silu = nn.SiLU()
         self.final_conv = nn.Conv2d(channels, 1, kernel_size=1, stride=1, padding=0, bias=True, dtype=dtype) # ch 128 -> 1
-        self.cross_block1 = SwinCrossBlock(channels, window_size=feat_map_size//16, shift_size=0, dtype=dtype) # only 1 window: not swinT
-        self.cross_block2 = SwinCrossBlock(channels, window_size=feat_map_size//16, shift_size=0, dtype=dtype) # only 1 window: not swinT
-        self.cross_block3 = SwinCrossBlock(channels, window_size=feat_map_size//16, shift_size=0, dtype=dtype) # only 1 window: not swinT
-        self.final_gn = nn.GroupNorm(num_groups=num_groups, num_channels=channels, dtype=dtype)
-        self.silu = nn.SiLU()
-        self.final_conv = nn.Conv2d(channels, 1, kernel_size=1, stride=1, padding=0, bias=True, dtype=dtype) # ch 128 -> 1
 
-        nn.init.kaiming_normal_(self.in_conv.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.kaiming_normal_(self.down_conv1.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.kaiming_normal_(self.down_conv2.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.kaiming_normal_(self.down_conv3.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.kaiming_normal_(self.down_conv4.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.kaiming_normal_(self.up_conv1.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.kaiming_normal_(self.up_conv2.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.kaiming_normal_(self.up_conv3.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.kaiming_normal_(self.up_conv4.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.xavier_normal_(self.final_conv.weight)
-        nn.init.constant_(self.final_conv.bias, 0)
-        nn.init.constant_(self.final_gn.weight, 1)
-        nn.init.constant_(self.final_gn.bias, 0)
+        nn.init.xavier_normal_(self.in_conv.weight)
+        nn.init.xavier_normal_(self.down_conv1.weight)
+        nn.init.xavier_normal_(self.down_conv2.weight)
+        nn.init.xavier_normal_(self.down_conv3.weight)
+        nn.init.xavier_normal_(self.down_conv4.weight)
+        nn.init.xavier_normal_(self.up_conv1.weight)
+        nn.init.xavier_normal_(self.up_conv2.weight)
+        nn.init.xavier_normal_(self.up_conv3.weight)
+        nn.init.xavier_normal_(self.up_conv4.weight)
         nn.init.xavier_normal_(self.final_conv.weight)
         nn.init.constant_(self.final_conv.bias, 0)
         nn.init.constant_(self.final_gn.weight, 1)
@@ -102,17 +91,10 @@ class DepthRefiner(L.LightningModule):
         Returns:
             out (torch.Tensor): output tensor of shape [B, K, H, W]
         """
-        """
-        Forward pass of the DepthRefiner.
-        Args:
-            x (torch.Tensor): input tensor of shape [B, K, H, W, d (128 + 4)] 128: upsampled features, 3: images, 1: depth map
-        Returns:
-            out (torch.Tensor): output tensor of shape [B, K, H, W]
-        """
-        # x: [B, K, H, W, d (128 + 4)]
+        # x: [B, K, H, W, d (128 + 5)]
         b, k, H, W, d = x.shape
-        assert d == self.channels + 4
-        x = x.reshape(-1, H, W, d).permute(0, 3, 1, 2) # [B*K, d (128 + 4), H, W]
+        assert d == self.channels + 5
+        x = x.reshape(-1, H, W, d).permute(0, 3, 1, 2) # [B*K, d (128 + 5), H, W]
         x = self.in_conv(x) # [B*K, 128, H, W]
         # encoder
         h1 = self.res_enc1_1(x)
