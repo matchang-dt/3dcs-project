@@ -167,15 +167,14 @@ class MVSplat(nn.Module):
         )
 
         # 3. Depth estimation
-        depth_maps = self.depth_estimator(
+        depth_maps, depth_conf = self.depth_estimator(
             cost_volume=cost_volume,
             images=context_images,
             features=features,
         )
-        depth_maps = torch.clamp(depth_maps, min=batch['near_plane'], max=batch['far_plane'])
-
-        depth_probs = torch.softmax(cost_volume, dim=-1)
-        depth_conf = depth_probs.max(dim=-1)[0]
+        n = near_plane.min() if isinstance(near_plane, torch.Tensor) else near_plane
+        f = far_plane.max() if isinstance(far_plane, torch.Tensor) else far_plane
+        depth_maps = torch.clamp(depth_maps, min=n, max=f)
 
         # 4. Gaussians (head calls adapter internally)
         gaussians = self.gaussian_head(

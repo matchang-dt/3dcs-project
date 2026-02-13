@@ -59,13 +59,16 @@ def cost_volume_construct(P_src, P_tgt, f_src, f_tgt, volume_grids, max_depth):
     assert torch.isfinite(P_merged).all(), "P_merged is not finite"
     warped = torch.einsum('bklij,hwdj->bklhwdi', P_merged, volume_grids) # [B, K, K - 1, h, w, d, 4]
     assert torch.isfinite(warped).all(), "warped is not finite"
-    warped_uv = (warped[..., :2] / (warped[..., 2:3] + eps) + 1) / 2 # [B, K, K - 1, h, w, d, 2]
+    denom = torch.clamp(warped[..., 2:3], min=1e-3)
+    warped_uv = (warped[..., :2] / denom + 1) / 2  # [B, K, K - 1, h, w, d, 2]
+    # warped_uv = torch.clamp(warped_uv, 0.0, 1.0)
+    # warped_uv = torch.nan_to_num(warped_uv, nan=0.5, posinf=1.0, neginf=0.0)
     assert torch.isfinite(warped_uv).all(), "warped_uv is not finite"
     warped_ij = warped_uv * torch.tensor([h, w], device=device, dtype=warped_uv.dtype) - 0.5 # [B, K, K - 1, h, w, d, 2]
     assert torch.isfinite(warped_ij).all(), "warped_ij is not finite"
     warped_ij = warped_ij.round().long() # [B, K, K - 1, h, w, d, 2]
-    warped_depth = warped[..., 2:3] # [B, K, K - 1, h, w, d, 1]
-    warped_inv_depth = (max_depth / (warped_depth + eps)).round().long() # [B, K, K - 1, h, w, d, 1]
+    # warped_depth = warped[..., 2:3] # [B, K, K - 1, h, w, d, 1]
+    warped_inv_depth = (max_depth / denom).round().long() # [B, K, K - 1, h, w, d, 1]
     assert torch.isfinite(warped_inv_depth).all(), "warped_inv_depth is not finite"
     warped_grids = torch.cat([warped_ij, warped_inv_depth - 1], dim=-1) # [B, K, K - 1, h, w, d, 3]
     grid_b = torch.arange(b, device=device).reshape(b, 1, 1, 1, 1, 1).expand(b, k, k - 1, h, w, d) # [B, K, K - 1, h, w, d]
