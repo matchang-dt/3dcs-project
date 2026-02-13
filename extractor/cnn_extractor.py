@@ -39,7 +39,7 @@ class CNNExtractor(L.LightningModule): # [B, K, 3, H, W] -> [B, K, 128, H//4, W/
             out_channels, out_channels, 
             kernel_size=1, stride=1, padding=0, bias=True, dtype=dtype
         )
-        nn.init.kaiming_normal_(self.proj.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.xavier_normal_(self.proj.weight)
         nn.init.constant_(self.proj.bias, 0)
 
     def forward(self, x):
