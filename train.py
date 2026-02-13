@@ -50,7 +50,7 @@ def create_model_from_hydra_config(cfg: DictConfig) -> MVSplatWrapper:
         hidden_dim=cfg.hidden_dim,
         swin_divisions=cfg.swin_divisions,
         cnn_dtype=dtype_map.get(cfg.cnn_dtype, torch.float32),
-        transformer_dtype=dtype_map.get(cfg.transformer_dtype, torch.bfloat16),
+        transformer_dtype=dtype_map.get(cfg.transformer_dtype, torch.float32),
         pipeline_dtype=dtype_map.get(cfg.pipeline_dtype, torch.float32),
         max_depth=cfg.max_depth,
         feature_dim=cfg.feature_dim,
