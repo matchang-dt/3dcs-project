@@ -39,7 +39,7 @@ checkpoint:
   filename: mvsplat-{epoch:02d}-{step:06d}
 
 # Mixed precision
-precision: 16-mixed  # or '32' or 'bf16-mixed'
+precision: 32-true  # or '32' or 'bf16-mixed'
 
 # Save validation images to disk (optional, set to a path to enable)
 save_images_dir: /workspace/3dcs-project/outputs/val_images  # e.g. "outputs/val_images"
