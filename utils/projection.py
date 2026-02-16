@@ -102,8 +102,8 @@ def get_camera_rays_world(
     cx = intrinsics[..., 0, 2:3]
     cy = intrinsics[..., 1, 2:3]
     
-    x = pixel_centers[..., 0:1] * W
-    y = pixel_centers[..., 1:2] * H
+    x = pixel_centers[..., 0:1]
+    y = pixel_centers[..., 1:2]
     
     # Unproject to camera space
     x_cam = (x - cx) / fx
@@ -112,7 +112,6 @@ def get_camera_rays_world(
     
     # homogenize + normalize
     ray_d_cam = torch.cat([x_cam, y_cam, z_cam], dim=-1)
-    ray_d_cam = ray_d_cam / ray_d_cam.norm(dim=-1, keepdim=True)
     
     # Transform ray direction to world space
     ray_d = torch.matmul(R_c2w, ray_d_cam.unsqueeze(-1)).squeeze(-1)

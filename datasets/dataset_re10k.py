@@ -39,6 +39,7 @@ class Re10kDatasetCfg:
     target_image_size: Tuple[int, int] = (256, 256)
     max_train_steps: int = 300000
     view_sampler: ViewSampler = None
+    normalize_scene: bool = False
 
 class Re10kDataset(IterableDataset):    
     def __init__(
@@ -50,6 +51,7 @@ class Re10kDataset(IterableDataset):
         target_image_size: Tuple[int, int] = (256, 256),
         max_train_steps: int = 300000,
         view_sampler: ViewSampler = None,
+        normalize_scene: bool = False,
     ):
         """
         Args:
@@ -67,7 +69,7 @@ class Re10kDataset(IterableDataset):
         self.num_target_views = num_target_views
         self.target_image_size = target_image_size
         self.max_train_steps = max_train_steps
-        
+        self.normalize_scene = normalize_scene
         # load shards
         stage_dir = self.data_root / stage
         if not stage_dir.exists():
@@ -251,7 +253,10 @@ class Re10kDataset(IterableDataset):
                     all_views = self.load_scene(scene_dict)
 
                     # Center and normalize scene using all cameras
-                    all_views, _ = normalize_scene(all_views)
+                    scale = torch.tensor(1.0)
+                    if self.normalize_scene:
+                        all_views, norm_info = normalize_scene(all_views)
+                        centroid, scale, max_baseline = norm_info['centroid'], norm_info['scale'], norm_info['max_baseline']
                     
                     if all_views is None:
                         continue
@@ -276,8 +281,8 @@ class Re10kDataset(IterableDataset):
                             'extrinsics': target_views.extrinsics,  # [num_target_views, 4, 4]
                         },
                         'scene_key': scene_dict.get('key', 'unknown'),
-                        'near_plane': scene_dict.get('near_plane', 1.0),
-                        'far_plane': scene_dict.get('far_plane', 100.0),
+                        'near_plane': scene_dict.get('near_plane', 1.0) * scale.item(),
+                        'far_plane': scene_dict.get('far_plane', 100.0) * scale.item(),
                     }
                     yield batch
                     

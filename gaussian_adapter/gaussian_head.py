@@ -65,7 +65,7 @@ class GaussianHead(nn.Module):
         _, _, h, w, C = features.shape  # h = H//4, w = W//4
         
         # Map confidence to opacity
-        opacities = self._map_conf_to_opacity(depth_conf, global_step)
+        opacities = self._map_conf_to_opacity(depth_conf, global_step) / self.cfg.gaussian_adapter_config.gaussians_per_pixel
         
         # Upsample features to full resolution
         features_flat = features.view(B * V, h, w, C).permute(0, 3, 1, 2)  # [B*V, 128, H//4, W//4]
