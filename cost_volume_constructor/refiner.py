@@ -1,7 +1,7 @@
 import lightning as L
 import torch
 from torch import nn
-
+import torch.nn.functional as F
 from utils import SwinCrossBlock, ResBlock4UNet, patchify
 
 
@@ -78,11 +78,13 @@ class CostVolumeRefiner(L.LightningModule):
         h3 = h_src.permute(0, 3, 1, 2) # [B*K, 128, H//16, W//16]
 
         # decoder
-        h4 = self.up_conv1(h3) # [B*K, 128, H//8, W//8]
+        # h4 = self.up_conv1(h3) # [B*K, 128, H//8, W//8]
+        h4 = F.interpolate(h3, size=(h//2, w//2), mode='bilinear', align_corners=False)
         h4 = torch.cat([h2, h4], dim=1) # [B*K, 256, H//8, W//8]
         h4 = self.res_dec1_1(h4) # [B*K, 128, H//8, W//8]
         h4 = self.res_dec1_2(h4) # [B*K, 128, H//8, W//8]
-        h5 = self.up_conv2(h4) # [B*K, 128, H//8, W//8]
+        # h5 = self.up_conv2(h4) # [B*K, 128, H//8, W//8]
+        h5 = F.interpolate(h4, size=(h, w), mode='bilinear', align_corners=False)
         h5 = torch.cat([h1, h5], dim=1) # [B*K, 256, H//4, W//4]
         out = self.res_dec2_1(h5) # [B*K, 128, H//4, W//4]
         out = self.res_dec2_2(out) # [B*K, 128, H//4, W//4]

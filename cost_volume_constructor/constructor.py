@@ -8,7 +8,7 @@ import lightning as L
 from .refiner import CostVolumeRefiner
 
 
-def generate_volume_grids(h, w, depth_steps=128):
+def generate_volume_grids(h, w, near, far, depth_steps=128):
     """
     Generate the volume grids for the cost volume construction.
     Args:
@@ -26,7 +26,7 @@ def generate_volume_grids(h, w, depth_steps=128):
     uv_grids = torch.stack(
         [u_grids, v_grids, torch.ones_like(u_grids, dtype=torch.float32)], dim=-1
     ).expand(h, w, depth_steps, 3) # [h, w, 128, 3]
-    inv_depths = torch.arange(1, depth_steps + 1, dtype=torch.float32)
+    inv_depths = torch.linspace(1/far, 1/near, depth_steps, dtype=torch.float32)
     inv_depths = inv_depths.reshape(1, 1, depth_steps, 1).expand(h, w, depth_steps, 1) #[h, w, 128, 1]
     volume_grids = torch.cat([uv_grids, inv_depths], dim=-1) # [h, w, 128, 4]
     return volume_grids # volume_grids[i, j, k] = [u, v, 1, 1/z]
@@ -81,13 +81,14 @@ class CostVolumeConstructor(L.LightningModule):
     Cost volume constructor module.
     Constructs the cost volume from the source and target features and their projection matrices, then refines the cost volume with a U-net based refiner.
     """
-    def __init__(self, h, w, max_depth, feature_dim=128, dtype=torch.float32): # h=H//4, w=W//4
+    def __init__(self, h, w, near=1, far=100,feature_dim=128, dtype=torch.float32): # h=H//4, w=W//4
         # h = H//4, w = W//4
         super().__init__()
-        self.max_depth = max_depth
         self.feature_dim = feature_dim
         group_num = feature_dim // 16
-        
+        self.near = near
+        self.far = far
+
         self.refiner = CostVolumeRefiner(channels=feature_dim, feat_map_size=h, dtype=dtype)
         self.up_conv1 = nn.ConvTranspose2d(feature_dim, feature_dim, 4, stride=2, padding=1, bias=False, dtype=dtype)
         self.up_conv2 = nn.ConvTranspose2d(feature_dim, feature_dim, 4, stride=2, padding=1, bias=False, dtype=dtype)
@@ -96,7 +97,7 @@ class CostVolumeConstructor(L.LightningModule):
         self.silu = nn.SiLU(inplace=True)
         self.last_conv = nn.Conv2d(feature_dim, feature_dim, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
         
-        volume_grids = generate_volume_grids(h, w, depth_steps=feature_dim)
+        volume_grids = generate_volume_grids(h, w, near, far,depth_steps=feature_dim)
         self.register_buffer('volume_grids', volume_grids)
 
     def forward(self, features, Ps):

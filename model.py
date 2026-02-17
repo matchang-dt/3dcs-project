@@ -31,7 +31,8 @@ class MVSplatConfig:
     pipeline_dtype: torch.dtype = torch.float32
 
     # Cost volume params
-    max_depth: float = 100.0
+    near: float = 1.0
+    far: float = 100.0
     feature_dim: int = 128
 
     # Gaussian head params
@@ -81,13 +82,15 @@ class MVSplat(nn.Module):
         self.cost_volume_constructor = CostVolumeConstructor(
             h=h,
             w=w,
-            max_depth=cfg.max_depth,
+            near=cfg.near,
+            far=cfg.far,
             feature_dim=cfg.feature_dim,
             dtype=cfg.pipeline_dtype,
         )
 
         self.depth_estimator = DepthEstimator(
-            max_depth=cfg.max_depth,
+            near=cfg.near,
+            far=cfg.far,
             channels=cfg.feature_dim,
             feat_map_size=cfg.image_size,
             dtype=cfg.pipeline_dtype,
@@ -174,7 +177,7 @@ class MVSplat(nn.Module):
         )
         n = near_plane.min() if isinstance(near_plane, torch.Tensor) else near_plane
         f = far_plane.max() if isinstance(far_plane, torch.Tensor) else far_plane
-        depth_maps = torch.clamp(depth_maps, min=n, max=f)
+        depth_maps = torch.clamp(depth_maps, min=n+1e-4, max=f-1e-4)
 
         # 4. Gaussians (head calls adapter internally)
         gaussians = self.gaussian_head(

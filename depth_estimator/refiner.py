@@ -1,8 +1,8 @@
 import lightning as L
 import torch
 from torch import nn
+import torch.nn.functional as F
 
-from utils import SwinCrossBlock, ResBlock4UNet, patchify
 from utils import SwinCrossBlock, ResBlock4UNet, patchify
 
 
@@ -122,19 +122,23 @@ class DepthRefiner(L.LightningModule):
         # assert torch.isfinite(h5).all(), "h5 in depth refiner bottleneck is not finite"
 
         # decoder
-        h6 = self.up_conv1(h5) # [B*K, 128, H//8, W//8]
+        # h6 = self.up_conv1(h5) # [B*K, 128, H//8, W//8]
+        h6 = F.interpolate(h5, size=(H//8, W//8), mode='bilinear', align_corners=False)
         h6 = torch.cat([h4, h6], dim=1) # [B*K, 256, H//8, W//8]
         h6 = self.res_dec1_1(h6) # [B*K, 128, H//8, W//8]
         h6 = self.res_dec1_2(h6) # [B*K, 128, H//8, W//8]
-        h7 = self.up_conv2(h6) # [B*K, 128, H//8, W//8]
+        # h7 = self.up_conv2(h6) # [B*K, 128, H//8, W//8]
+        h7 = F.interpolate(h6, size=(H//4, W//4), mode='bilinear', align_corners=False)
         h7 = torch.cat([h3, h7], dim=1) # [B*K, 256, H//4, W//4]
         h7 = self.res_dec2_1(h7) # [B*K, 128, H//4, W//4]
         h7 = self.res_dec2_2(h7) # [B*K, 128, H//4, W//4]
-        h8 = self.up_conv3(h7) # [B*K, 128, H//4, W//4]
+        # h8 = self.up_conv3(h7) # [B*K, 128, H//4, W//4]
+        h8 = F.interpolate(h7, size=(H//2, W//2), mode='bilinear', align_corners=False)
         h8 = torch.cat([h2, h8], dim=1) # [B*K, 256, H//2, W//2]
         h8 = self.res_dec3_1(h8) # [B*K, 128, H//2, W//2]
         h8 = self.res_dec3_2(h8) # [B*K, 128, H//2, W//2]
-        h9 = self.up_conv4(h8) # [B*K, 128, H//2, W//2]
+        # h9 = self.up_conv4(h8) # [B*K, 128, H//2, W//2]
+        h9 = F.interpolate(h8, size=(H, W), mode='bilinear', align_corners=False)
         h9 = torch.cat([h1, h9], dim=1) # [B*K, 256, H, W]
         h9 = self.res_dec4_1(h9) # [B*K, 128, H, W]
         h9 = self.res_dec4_2(h9) # [B*K, 128, H, W]
