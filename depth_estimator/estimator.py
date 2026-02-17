@@ -69,11 +69,11 @@ class DepthEstimator(L.LightningModule):
         refine_inputs = torch.cat([images, features, inv_depth_map_usq, depth_conf_usq], dim=1) # [B*K, 128+5, H, W]
         refine_inputs = refine_inputs.permute(0, 2, 3, 1).reshape(b, k, H, W, d+5) # [B*K, H, W, 128+5]
         inv_depth_residual = self.refiner(refine_inputs) # [B, K, H, W]
-        print("================================================")
-        print("inv_depth_map min, max: ", inv_depth_map.min(), inv_depth_map.max())
-        print("inv_depth_map mean, std: ", inv_depth_map.mean(), inv_depth_map.std())
-        print("inv_depth_residual min, max: ", inv_depth_residual.min(), inv_depth_residual.max())
-        print("inv_depth_residual mean, std: ", inv_depth_residual.mean(), inv_depth_residual.std())
+        # print("================================================")
+        # print("inv_depth_map min, max: ", inv_depth_map.min(), inv_depth_map.max())
+        # print("inv_depth_map mean, std: ", inv_depth_map.mean(), inv_depth_map.std())
+        # print("inv_depth_residual min, max: ", inv_depth_residual.min(), inv_depth_residual.max())
+        # print("inv_depth_residual mean, std: ", inv_depth_residual.mean(), inv_depth_residual.std())
         inv_depth_map += inv_depth_residual # [B, K, H, W]
         inv_depth_map = inv_depth_map.clamp(max=1/self.near, min=1/self.far)
         depth_map = 1 / inv_depth_map # [B, K, H, W]
