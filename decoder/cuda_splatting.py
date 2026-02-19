@@ -45,6 +45,7 @@ def render_gaussians_cuda(
     # for numerical stability
     scale = 1 / near
     extrinsics = extrinsics.clone()
+    extrinsics = torch.linalg.inv(extrinsics) # NOTE: w2c -> c2w
     extrinsics[..., :3, 3] = extrinsics[..., :3, 3] * scale[:, None]
     gaussian_covariances = gaussian_covariances * (scale[:, None, None, None] ** 2)
     gaussian_means = gaussian_means * scale[:, None, None]

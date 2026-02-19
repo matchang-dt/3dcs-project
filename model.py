@@ -138,7 +138,7 @@ class MVSplat(nn.Module):
         target_intrinsics = batch["target"]["intrinsics"]
         target_extrinsics = batch["target"]["extrinsics"]
 
-        near_plane = batch.get("near_plane", 0.1)
+        near_plane = batch.get("near_plane", 1.0)
         far_plane = batch.get("far_plane", 100.0)
 
         B, K, C, H, W = context_images.shape

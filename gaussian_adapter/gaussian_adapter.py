@@ -60,7 +60,7 @@ class GaussianAdapter(torch.nn.Module):
         Input (pre-set to broadcast-compatible shapes):
         - pre_gaussians: (batch_dim(B), views(V), num_rays(R=H*W), num_surfaces(srf), gaussians_per_pixel(gpp), c)
         - pixel_centers: (B, V, R, srf, gpp, 2)
-        - extrinsics: (B, V, 4, 4)
+        - extrinsics (w2c): (B, V, 4, 4)
         - intrinsics: (B, V, 3, 3)
         - opacities: (B, V, rays, srf, gpp)
         - depths: (B, V, rays, srf, gpp)

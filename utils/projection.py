@@ -102,8 +102,8 @@ def get_camera_rays_world(
     cx = intrinsics[..., 0, 2:3]
     cy = intrinsics[..., 1, 2:3]
     
-    x = pixel_centers[..., 0:1] * W
-    y = pixel_centers[..., 1:2] * H
+    x = pixel_centers[..., 0:1]
+    y = pixel_centers[..., 1:2]
     
     # Unproject to camera space
     x_cam = (x - cx) / fx
@@ -121,7 +121,7 @@ def get_camera_rays_world(
     return ray_o, ray_d
 
 def make_proj_matrix(extrinsics, intrinsics):
-    # extrinsics: [B, V, 4, 4], intrinsics: [B, V, 3, 3]
+    # extrinsics (w2c): [B, V, 4, 4], intrinsics: [B, V, 3, 3]
     B, V = extrinsics.shape[:2]
     K = torch.zeros((B, V, 4, 4), device=extrinsics.device, dtype=extrinsics.dtype)
     K[:, :, :3, :3] = intrinsics
