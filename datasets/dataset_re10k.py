@@ -44,7 +44,7 @@ class Re10kDatasetCfg:
 class Re10kDataset(IterableDataset):    
     def __init__(
         self,
-        cfg: Re10kDatasetCfg,
+        cfg: Re10kDatasetCfg, # later, only keep cfg
         data_root: str = "/workspace/re10kvol/re10k",
         stage: str = "train",
         num_input_views: int = 2,

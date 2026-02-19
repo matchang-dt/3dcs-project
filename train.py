@@ -147,10 +147,13 @@ def main(cfg: DictConfig):
     
     # Set seed
     L.seed_everything(cfg.seed, workers=True)
+
+    print(f"Config: {cfg}")
     
     # Create datasets
     print("\nCreating datasets...")
     train_dataset = Re10kDataset(
+        cfg=cfg.dataset,
         data_root=cfg.dataset.data_root,
         stage='train',
         num_input_views=cfg.dataset.num_input_views,
@@ -220,6 +223,5 @@ def main(cfg: DictConfig):
 
 if __name__ == '__main__':
     import os
-    os.environ.setdefault("WANDB_API_KEY", "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")
     os.environ.setdefault("WANDB_MODE", "online")
     main()

@@ -106,11 +106,10 @@ def render_gaussians_cuda(
             campos=campos,
             prefiltered=False,
             debug=False,
-            antialiasing=False,
         )
         rasterizer = GaussianRasterizer(settings)
 
-        image, radii, _ = rasterizer(
+        image, radii = rasterizer(
             means3D=means3D,
             means2D=means2D,
             shs=shs_i,
