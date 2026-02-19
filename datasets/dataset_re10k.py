@@ -39,10 +39,12 @@ class Re10kDatasetCfg:
     target_image_size: Tuple[int, int] = (256, 256)
     max_train_steps: int = 300000
     view_sampler: ViewSampler = None
+    normalize_scene: bool = False
 
 class Re10kDataset(IterableDataset):    
     def __init__(
         self,
+        cfg: Re10kDatasetCfg,
         data_root: str = "/workspace/re10kvol/re10k",
         stage: str = "train",
         num_input_views: int = 2,
@@ -61,7 +63,8 @@ class Re10kDataset(IterableDataset):
             max_train_steps: Maximum training steps (for baseline expansion schedule)
         """
         super().__init__()
-        self.data_root = Path(data_root)
+        self.cfg = cfg
+        self.data_root = Path(cfg.data_root)
         self.stage = stage
         self.num_input_views = num_input_views
         self.num_target_views = num_target_views
@@ -251,7 +254,8 @@ class Re10kDataset(IterableDataset):
                     all_views = self.load_scene(scene_dict)
 
                     # Center and normalize scene using all cameras
-                    all_views, _ = normalize_scene(all_views)
+                    if self.cfg.normalize_scene:
+                        all_views, _ = normalize_scene(all_views)
                     
                     if all_views is None:
                         continue
