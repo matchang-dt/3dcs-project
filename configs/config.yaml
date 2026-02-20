@@ -2,13 +2,13 @@
 # Compose model, dataset, and train configs. Model and train are merged at root via @package _global_.
 
 defaults:
-  - model
-  - dataset: re10k_train
-  - train
+  - model  # model params
+  - dataset: re10k_train  # dataset params
+  - train  # training + Lighting params
   - _self_
 
 # Experiment
-experiment_name: mvsplat_re10k
+experiment_name: mvsplat_re10k  # this will be wandb name
 seed: 42
 
 # Hydra run directory

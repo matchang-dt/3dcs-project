@@ -45,12 +45,6 @@ class Re10kDataset(IterableDataset):
     def __init__(
         self,
         cfg: Re10kDatasetCfg, # later, only keep cfg
-        data_root: str = "/workspace/re10kvol/re10k",
-        stage: str = "train",
-        num_input_views: int = 2,
-        num_target_views: int = 4,
-        target_image_size: Tuple[int, int] = (256, 256),
-        max_train_steps: int = 300000,
         view_sampler: ViewSampler = None,
     ):
         """
@@ -65,14 +59,15 @@ class Re10kDataset(IterableDataset):
         super().__init__()
         self.cfg = cfg
         self.data_root = Path(cfg.data_root)
-        self.stage = stage
-        self.num_input_views = num_input_views
-        self.num_target_views = num_target_views
-        self.target_image_size = target_image_size
-        self.max_train_steps = max_train_steps
+        self.stage = cfg.stage
+        self.num_input_views = cfg.num_input_views
+        self.num_target_views = cfg.num_target_views
+        t = getattr(cfg, "target_image_size", 256) # if int, assume square
+        self.target_image_size = (int(t), int(t)) if isinstance(t, (int, float)) else (int(t[0]), int(t[1]))
+        self.max_train_steps = cfg.max_train_steps
         
         # load shards
-        stage_dir = self.data_root / stage
+        stage_dir = self.data_root / self.stage
         if not stage_dir.exists():
             raise ValueError(f"Stage directory does not exist: {stage_dir}")
         
@@ -88,12 +83,12 @@ class Re10kDataset(IterableDataset):
                 self.num_input_views = num_input_views
                 self.num_target_views = num_target_views
         
-        sampler_cfg = SamplerCfg(num_input_views, num_target_views)
+        sampler_cfg = SamplerCfg(self.num_input_views, self.num_target_views)
 
         if view_sampler is None:
-            self.view_sampler = ViewSamplerDefault(sampler_cfg, stage)
+            self.view_sampler = ViewSamplerDefault(sampler_cfg, self.stage)
         else:
-            self.view_sampler = view_sampler(sampler_cfg, stage)
+            self.view_sampler = view_sampler(sampler_cfg, self.stage)
 
         self.current_step = 0  # tracking steps for pair distances
         self.dataset_name = "re10k"

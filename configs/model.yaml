@@ -14,6 +14,8 @@ pipeline_dtype: float32
 # Cost volume
 max_depth: 100.0
 feature_dim: 128
+near: 1.0  
+far: 100.0
 
 # Gaussian head
 gaussian_head_channels: 132 # 128 (features) + 4 (RGB + depth)
@@ -23,8 +25,8 @@ opacity_warmup: 10000
 
 # Gaussian adapter
 sh_degree: 4
-scale_min: 0.01
-scale_max: 100.0
+scale_min: 0.5
+scale_max: 15.0
 gaussian_scale_pct: 0.1
 gaussians_per_pixel: 1
 num_surfaces: 1

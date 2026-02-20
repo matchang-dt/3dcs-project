@@ -130,7 +130,7 @@ def render_gaussians_cuda(
 DepthRenderingMode = Literal["depth", "disparity", "relative_disparity", "log"]
 
 def render_depth_gaussians_cuda(
-    extrinsics: torch.Tensor, # (B,V,4,4)
+    extrinsics: torch.Tensor, # (B,V,4,4) w2c
     intrinsics: torch.Tensor, # (B,V,3,3)
     near: torch.Tensor, # (B,V)
     far: torch.Tensor, # (B,V)
@@ -142,7 +142,7 @@ def render_depth_gaussians_cuda(
     mode: DepthRenderingMode = "depth",
 ) -> torch.Tensor: # (B,V,H,W)
     camera_space_gaussians = einsum(
-        extrinsics.inverse(), to_homogeneous(gaussian_means), "b i j, b g j -> b g i"
+        extrinsics, to_homogeneous(gaussian_means), "b i j, b g j -> b g i"
     )
     fake_color = camera_space_gaussians[..., 2]
 
