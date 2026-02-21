@@ -16,6 +16,12 @@ from model import MVSplat, MVSplatConfig
 from lpips import LPIPS
 from lightning.pytorch.loggers import WandbLogger
 
+def _psnr(render: torch.Tensor, gt: torch.Tensor, max_val: float = 1.0) -> torch.Tensor:
+    """PSNR in dB. Rendered and GT in [0, max_val]. Returns scalar."""
+    mse = F.mse_loss(render, gt)
+    if mse <= 0:
+        return torch.tensor(float("inf"), device=render.device, dtype=render.dtype)
+    return 10.0 * (torch.log(max_val ** 2 / mse) / torch.log(torch.tensor(10.0, device=render.device)))
 
 def _apply_jet_cmap(x: torch.Tensor) -> torch.Tensor:
     """Apply jet colormap (blue=low, red=high) to a 2D tensor. Returns [3, H, W] RGB."""
@@ -50,6 +56,7 @@ class LightningConfig:
     
     # Logging
     log_images_every_n_steps: int = 1000
+    val_check_interval: int = 5000
 
 
 class MVSplatWrapper(L.LightningModule):
@@ -215,7 +222,11 @@ class MVSplatWrapper(L.LightningModule):
             
         outputs = self(batch, render_depth=True)
         losses = self.compute_loss(outputs, batch)
-        
+
+        # log PSNR
+        psnr = _psnr(outputs['rendered_images'].detach(), batch['target']['images'].detach())
+        self.log("val/psnr", psnr, on_step=False, on_epoch=True)
+
         # log losses to logger
         for name, value in losses.items():
             self.log(

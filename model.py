@@ -43,8 +43,8 @@ class MVSplatConfig:
 
     # Gaussian adapter params
     sh_degree: int = 4
-    scale_min: float = 0.01
-    scale_max: float = 100.0
+    scale_min: float = 0.5
+    scale_max: float = 15.0
     gaussian_scale_pct: float = 0.1
     gaussians_per_pixel: int = 1
     num_surfaces: int = 1
@@ -138,8 +138,8 @@ class MVSplat(nn.Module):
         target_intrinsics = batch["target"]["intrinsics"]
         target_extrinsics = batch["target"]["extrinsics"]
 
-        near_plane = batch.get("near_plane", 1.0)
-        far_plane = batch.get("far_plane", 100.0)
+        near_plane = self.cfg.near
+        far_plane = self.cfg.far
 
         B, K, C, H, W = context_images.shape
         num_target_views = target_extrinsics.shape[1]

@@ -23,7 +23,7 @@ import numpy as np
 from einops import rearrange, repeat
 from .view_sampler.view_sampler import ViewSet, ViewSampler, ViewSamplerDefault
 from .shims.crop_shim import apply_crop_shim_to_views
-from .shims.norm_shim import normalize_scene
+from .shims.norm_shim import normalize_scene, normalize_intrinsics
 
 
 # ! CAREFUL WITH THIS AND RE10K DATASETS
@@ -40,16 +40,12 @@ class AcidDatasetCfg:
     target_image_size: Tuple[int, int] = (256, 256)
     max_train_steps: int = 300000
     view_sampler: ViewSampler = None
+    normalize_scene: bool = False
 
 class AcidDataset(IterableDataset):    
     def __init__(
         self,
-        data_root: str = "/workspace/re10kvol/acid",
-        stage: str = "train",
-        num_input_views: int = 2,
-        num_target_views: int = 4,
-        target_image_size: Tuple[int, int] = (256, 256),
-        max_train_steps: int = 300000,
+        cfg: AcidDatasetCfg,
         view_sampler: ViewSampler = None,
     ):
         """
@@ -62,15 +58,16 @@ class AcidDataset(IterableDataset):
             max_train_steps: Maximum training steps (for baseline expansion schedule)
         """
         super().__init__()
-        self.data_root = Path(data_root)
-        self.stage = stage
-        self.num_input_views = num_input_views
-        self.num_target_views = num_target_views
-        self.target_image_size = target_image_size
-        self.max_train_steps = max_train_steps
+        self.cfg = cfg
+        self.data_root = Path(cfg.data_root)
+        self.stage = cfg.stage
+        self.num_input_views = cfg.num_input_views
+        self.num_target_views = cfg.num_target_views
+        self.target_image_size = cfg.target_image_size
+        self.max_train_steps = cfg.max_train_steps
         
         # load shards
-        stage_dir = self.data_root / stage
+        stage_dir = self.data_root / self.stage
         if not stage_dir.exists():
             raise ValueError(f"Stage directory does not exist: {stage_dir}")
         
@@ -86,12 +83,12 @@ class AcidDataset(IterableDataset):
                 self.num_input_views = num_input_views
                 self.num_target_views = num_target_views
         
-        sampler_cfg = SamplerCfg(num_input_views, num_target_views)
+        sampler_cfg = SamplerCfg(self.num_input_views, self.num_target_views)
 
         if view_sampler is None:
-            self.view_sampler = ViewSamplerDefault(sampler_cfg, stage)
+            self.view_sampler = ViewSamplerDefault(sampler_cfg, self.stage)
         else: 
-            self.view_sampler = view_sampler(sampler_cfg, stage)
+            self.view_sampler = view_sampler(sampler_cfg, self.stage)
 
         self.current_step = 0  # tracking steps for pair distances
         self.dataset_name = "acid"
@@ -215,6 +212,7 @@ class AcidDataset(IterableDataset):
             
             # Parse cameras with original dimensions
             intrinsics, extrinsics = self.parse_cameras(cameras, original_dims)
+            intrinsics = normalize_intrinsics(intrinsics, image_size=self.target_image_size)
             
             viewset = ViewSet(
                 extrinsics=extrinsics,
@@ -250,18 +248,30 @@ class AcidDataset(IterableDataset):
                     # Load full scene as ViewSet
                     all_views = self.load_scene(scene_dict)
 
-                    # Center and normalize scene using all cameras
-                    all_views, _ = normalize_scene(all_views)
-                    
                     if all_views is None:
                         continue
+
+                    # Center and normalize scene using all cameras
+                    if self.cfg.normalize_scene:
+                        all_views, _ = normalize_scene(all_views)
                     
                     # Sample context and target views
-                    context_views, target_views = self.view_sampler.sample_views(
-                        all_views,
-                        curr_train_step=self.current_step if self.stage == 'train' else None,
-                        max_train_steps=self.max_train_steps
-                    )
+                    try:
+                        context_views, target_views = self.view_sampler.sample_views(
+                            all_views,
+                            curr_train_step=self.current_step if self.stage == 'train' else None,
+                            max_train_steps=self.max_train_steps
+                        )
+                    except Exception as e:
+                        print(f"Error sampling views for scene {scene_dict.get('key', 'unknown')}: {e}")
+                        continue
+
+                    # if number of views not expected for some reason, we should be skipping the scene
+                    if context_views.images.shape[0] != self.num_input_views \
+                        or target_views.images.shape[0] != self.num_target_views \
+                        or (self.num_input_views + self.num_target_views) > all_views.images.shape[0]:
+                        print(f"Skipping scene {scene_dict.get('key', 'unknown')} because number of views is not expected")
+                        continue
                     
                     # Return as a batch-ready dict
                     batch = {
@@ -276,7 +286,7 @@ class AcidDataset(IterableDataset):
                             'extrinsics': target_views.extrinsics,  # [num_target_views, 4, 4]
                         },
                         'scene_key': scene_dict.get('key', 'unknown'),
-                        'near_plane': scene_dict.get('near_plane', 0.1),
+                        'near_plane': scene_dict.get('near_plane', 1.0),
                         'far_plane': scene_dict.get('far_plane', 100.0),
                     }
                     yield batch

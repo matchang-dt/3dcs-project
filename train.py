@@ -8,10 +8,12 @@ Usage:
     python train.py max_depth=50.0                     # Override model params
 """
 import os
+from typing import Any
+
 import torch
 import torch.nn.functional as F
 import lightning as L
-from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+from lightning.pytorch.callbacks import Callback, ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
 from torch.utils.data import DataLoader
 import hydra
@@ -23,6 +25,23 @@ from decoder.decoder_cuda_splatting_gaussians import DecoderGaussianSplattingCUD
 from datasets.dataset import DatasetCfg
 from datasets.dataset_re10k import Re10kDataset
 
+
+class UpdateDatasetGlobalStepCallback(Callback):
+    """Updates the train dataset's current_step for baseline-expansion view sampling."""
+
+    def on_train_batch_start(self, trainer: L.Trainer, pl_module: L.LightningModule, batch: Any, batch_idx: int) -> None:
+        dl = trainer.train_dataloader
+        if dl is None:
+            return
+        # Single DataLoader (our case) or CombinedLoader with .loaders
+        loaders = getattr(dl, "loaders", [dl])
+        if not isinstance(loaders, list):
+            loaders = [loaders]
+        for loader in loaders:
+            dataset = getattr(loader, "dataset", None)
+            if dataset is not None and hasattr(dataset, "set_training_step"):
+                dataset.set_training_step(trainer.global_step)
+                break
 
 def create_model_from_hydra_config(cfg: DictConfig) -> MVSplatWrapper:
     """
@@ -79,6 +98,8 @@ def create_model_from_hydra_config(cfg: DictConfig) -> MVSplatWrapper:
         warmup_steps=cfg.scheduler.warmup_steps,
         rgb_loss_weight=cfg.loss.rgb_loss_weight,
         lpips_loss_weight=cfg.loss.lpips_loss_weight,
+        log_images_every_n_steps=cfg.log_images_every_n_steps,
+        val_check_interval=cfg.val_check_interval,
     )
     
     # Create and return Lightning wrapper
@@ -152,15 +173,7 @@ def main(cfg: DictConfig):
     
     # Create datasets
     print("\nCreating datasets...")
-    train_dataset = Re10kDataset(
-        cfg=cfg.dataset,
-        data_root=cfg.dataset.data_root,
-        stage='train',
-        num_input_views=cfg.dataset.num_input_views,
-        num_target_views=cfg.dataset.num_target_views,
-        target_image_size=(cfg.dataset.target_image_size, cfg.dataset.target_image_size),
-        max_train_steps=cfg.dataset.max_train_steps,
-    )
+    train_dataset = Re10kDataset(cfg=cfg.dataset)
     
     # Create dataloaders
     train_loader = DataLoader(
@@ -186,11 +199,12 @@ def main(cfg: DictConfig):
         mode=cfg.checkpoint.mode,
         save_top_k=cfg.checkpoint.save_top_k,
         save_last=cfg.checkpoint.save_last,
-        every_n_train_steps=cfg.val_check_interval,
+        every_n_train_steps=cfg.checkpoint.save_every_n_train_steps,
     )
     
     lr_monitor = LearningRateMonitor(logging_interval='step')
-    
+    step_callback = UpdateDatasetGlobalStepCallback()
+
     # Setup logger
     logger = WandbLogger(
         save_dir='logs/',
@@ -203,7 +217,7 @@ def main(cfg: DictConfig):
         accelerator='auto',
         devices=cfg.num_gpus,
         precision=cfg.precision,
-        callbacks=[checkpoint_callback, lr_monitor],
+        callbacks=[checkpoint_callback, lr_monitor, step_callback],
         logger=logger,
         log_every_n_steps=cfg.log_every_n_steps,
         val_check_interval=cfg.val_check_interval,
