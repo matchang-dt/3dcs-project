@@ -248,19 +248,30 @@ class Re10kDataset(IterableDataset):
                     # Load full scene as ViewSet
                     all_views = self.load_scene(scene_dict)
 
+                    if all_views is None:
+                        continue
+
                     # Center and normalize scene using all cameras
                     if self.cfg.normalize_scene:
                         all_views, _ = normalize_scene(all_views)
                     
-                    if all_views is None:
-                        continue
-                    
                     # Sample context and target views
-                    context_views, target_views = self.view_sampler.sample_views(
-                        all_views,
-                        curr_train_step=self.current_step if self.stage == 'train' else None,
-                        max_train_steps=self.max_train_steps
-                    )
+                    try:
+                        context_views, target_views = self.view_sampler.sample_views(
+                            all_views,
+                            curr_train_step=self.current_step if self.stage == 'train' else None,
+                            max_train_steps=self.max_train_steps
+                        )
+                    except Exception as e:
+                        print(f"Error sampling views for scene {scene_dict.get('key', 'unknown')}: {e}")
+                        continue
+
+                    # if number of views not expected for some reason, we should be skipping the scene
+                    if context_views.images.shape[0] != self.num_input_views \
+                        or target_views.images.shape[0] != self.num_target_views \
+                        or (self.num_input_views + self.num_target_views) > all_views.images.shape[0]:
+                        print(f"Skipping scene {scene_dict.get('key', 'unknown')} because number of views is not expected")
+                        continue
                     
                     # Return as a batch-ready dict
                     batch = {
