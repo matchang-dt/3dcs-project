@@ -171,6 +171,7 @@ def main(cfg: DictConfig):
     
     # Create datasets
     print("\nCreating datasets...")
+    print(f"Dataset: {cfg.dataset.name} (data_root={cfg.dataset.data_root})")
     train_dataset = DATASETS[cfg.dataset.name](cfg=cfg.dataset)
     
     # Create dataloaders

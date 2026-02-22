@@ -59,6 +59,12 @@ class ViewSamplerDefault(ViewSampler):
 
         if num_input_views < 2:
             raise ValueError("Expects num_input_views >= 2 for now")
+        min_required = num_input_views + (num_target_views if num_target_views > 0 else 1)
+        if num_total_views < min_required or num_total_views < 2:
+            raise ValueError(
+                f"Scene has {num_total_views} views but need at least max(2, {min_required}) for "
+                f"num_input_views={num_input_views}, num_target_views={num_target_views}"
+            )
 
         # Use a fraction for spread: at the start, close to 0; at the end, nearly 1
         # Handle case where max_iters is 0 or None to avoid division by zero

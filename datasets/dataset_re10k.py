@@ -254,7 +254,13 @@ class Re10kDataset(IterableDataset):
                     # Center and normalize scene using all cameras
                     if self.cfg.normalize_scene:
                         all_views, _ = normalize_scene(all_views)
-                    
+
+                    # Skip scenes with too few views before calling the sampler (avoids index errors in worker)
+                    num_views = all_views.extrinsics.shape[0]
+                    min_required = self.num_input_views + self.num_target_views
+                    if num_views < min_required:
+                        continue
+
                     # Sample context and target views
                     try:
                         context_views, target_views = self.view_sampler.sample_views(
