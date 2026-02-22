@@ -63,7 +63,8 @@ class AcidDataset(IterableDataset):
         self.stage = cfg.stage
         self.num_input_views = cfg.num_input_views
         self.num_target_views = cfg.num_target_views
-        self.target_image_size = cfg.target_image_size
+        t = getattr(cfg, "target_image_size", 256)
+        self.target_image_size = (int(t), int(t)) if isinstance(t, (int, float)) else (int(t[0]), int(t[1]))
         self.max_train_steps = cfg.max_train_steps
         
         # load shards

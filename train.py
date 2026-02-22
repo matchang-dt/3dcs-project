@@ -2,10 +2,9 @@
 Hydra + Lightning training script for MVSplat.
 
 Usage:
-    python train.py                                    # Use default config
-    python train.py dataset=datasets/re10k_test        # Override dataset
-    python train.py batch_size=4                       # Override training params
-    python train.py max_depth=50.0                     # Override model params
+    python train.py                         # Default: RE10K dataset
+    python train.py dataset=acid_train      # Use ACID dataset
+    python train.py batch_size=4            # Override training params
 """
 import os
 from typing import Any
@@ -22,8 +21,7 @@ from omegaconf import DictConfig, OmegaConf
 from model import MVSplatConfig
 from wrapper import MVSplatWrapper, LightningConfig
 from decoder.decoder_cuda_splatting_gaussians import DecoderGaussianSplattingCUDACfg
-from datasets.dataset import DatasetCfg
-from datasets.dataset_re10k import Re10kDataset
+from datasets.dataset import DATASETS
 
 
 class UpdateDatasetGlobalStepCallback(Callback):
@@ -173,7 +171,7 @@ def main(cfg: DictConfig):
     
     # Create datasets
     print("\nCreating datasets...")
-    train_dataset = Re10kDataset(cfg=cfg.dataset)
+    train_dataset = DATASETS[cfg.dataset.name](cfg=cfg.dataset)
     
     # Create dataloaders
     train_loader = DataLoader(
