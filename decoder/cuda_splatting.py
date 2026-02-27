@@ -106,10 +106,12 @@ def render_gaussians_cuda(
             campos=campos,
             prefiltered=False,
             debug=False,
+            antialiasing=False,        
         )
         rasterizer = GaussianRasterizer(settings)
 
-        image, radii = rasterizer(
+        # image, radii = rasterizer(
+        image = rasterizer(
             means3D=means3D,
             means2D=means2D,
             shs=shs_i,
@@ -117,8 +119,8 @@ def render_gaussians_cuda(
             opacities=opacities,
             cov3D_precomp=cov3D,
         )
-        all_images.append(image)
-        all_radii.append(radii)
+        all_images.append(image[0])
+        # all_radii.append(radii)
     
     result = torch.stack(all_images)
     # Convert back to original dtype if needed

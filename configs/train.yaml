@@ -30,7 +30,9 @@ batch_size: 6
 num_workers: 4
 max_steps: 300000
 val_check_interval: 5000
-log_every_n_steps: 1000
+# log_every_n_steps: 1000
+log_every_n_steps: 10
+# log_images_every_n_steps: 1000
 log_images_every_n_steps: 1000
 gradient_clip_val: 1.0
 num_gpus: 1  # adjust this in command line
@@ -51,7 +53,8 @@ checkpoint:
   save_every_n_train_steps: 5000
 
 # Mixed precision
-precision: 16-mixed  # or '32' or 'bf16-mixed'
+# precision: 16-mixed  # or '32' or 'bf16-mixed'
+precision: 32-true  # or '32' or 'bf16-mixed'
 
 # Save validation images to disk (optional, set to a path to enable)
 save_images_dir: /workspace/3dcs-project/outputs/val_images  # e.g. "outputs/val_images"

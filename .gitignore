@@ -6,5 +6,7 @@ __pycache__/
 /.vscode/
 /.cursor/
 /.3dcsplat/
+/k8s/
 /workspace/
-a
+.claudeignore
+/a
