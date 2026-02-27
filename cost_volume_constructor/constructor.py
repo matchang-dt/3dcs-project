@@ -90,12 +90,19 @@ class CostVolumeConstructor(L.LightningModule):
         self.far = far
 
         self.refiner = CostVolumeRefiner(channels=feature_dim, feat_map_size=h, dtype=dtype)
-        self.up_conv1 = nn.ConvTranspose2d(feature_dim, feature_dim, 4, stride=2, padding=1, bias=False, dtype=dtype)
-        self.up_conv2 = nn.ConvTranspose2d(feature_dim, feature_dim, 4, stride=2, padding=1, bias=False, dtype=dtype)
-        self.gn1 = nn.GroupNorm(num_groups=group_num, num_channels=feature_dim, eps=1e-6, dtype=dtype)
-        self.gn2 = nn.GroupNorm(num_groups=group_num, num_channels=feature_dim, eps=1e-6, dtype=dtype)
+        # self.up_conv1 = nn.ConvTranspose2d(feature_dim, feature_dim, 4, stride=2, padding=1, bias=False, dtype=dtype)
+        # self.up_conv2 = nn.ConvTranspose2d(feature_dim, feature_dim, 4, stride=2, padding=1, bias=False, dtype=dtype)
+        self.out_conv1 = nn.Conv2d(feature_dim, feature_dim, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
+        self.out_conv2 = nn.Conv2d(feature_dim, feature_dim, kernel_size=3, stride=1, padding=1, bias=True, dtype=dtype)
+        self.gn = nn.GroupNorm(num_groups=group_num, num_channels=feature_dim, eps=1e-6, dtype=dtype)
+        # self.gn2 = nn.GroupNorm(num_groups=group_num, num_channels=feature_dim, eps=1e-6, dtype=dtype)
         self.silu = nn.SiLU(inplace=True)
-        self.last_conv = nn.Conv2d(feature_dim, feature_dim, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
+        nn.init.kaiming_normal_(self.out_conv1.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.xavier_normal_(self.out_conv2.weight)
+        nn.init.constant_(self.out_conv2.bias, 0)
+        nn.init.constant_(self.gn.weight, 1)
+        nn.init.constant_(self.gn.bias, 0)
+        # self.last_conv = nn.Conv2d(feature_dim, feature_dim, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
         
         volume_grids = generate_volume_grids(h, w, near, far,depth_steps=feature_dim)
         self.register_buffer('volume_grids', volume_grids)
@@ -141,13 +148,19 @@ class CostVolumeConstructor(L.LightningModule):
         # assert torch.isfinite(cost_volumes).all(), "cost_volumes is not finite"
         # upsample the cost volume to the original image size
         cost_volumes = cost_volumes.permute(0, 1, 4, 2, 3).reshape(b * k, self.feature_dim, h, w) # [B * K, 128, H//4, W//4]
-        cost_volumes = self.up_conv1(cost_volumes) # [B * K, 128, H//2, W//2]
-        cost_volumes = self.gn1(cost_volumes) # [B * K, 128, H//2, W//2]
+        cost_volumes = F.interpolate(cost_volumes, size=(h*2, w*2), mode='bilinear', align_corners=False)
+        cost_volumes = self.out_conv1(cost_volumes) # [B * K, 128, H//2, W//2]
+        cost_volumes = self.gn(cost_volumes) # [B * K, 128, H//2, W//2]
         cost_volumes = self.silu(cost_volumes) # [B * K, 128, H//2, W//2]
-        cost_volumes = self.up_conv2(cost_volumes) # [B * K, 128, H, W]
-        cost_volumes = self.gn2(cost_volumes) # [B * K, 128, H, W]
-        cost_volumes = self.silu(cost_volumes) # [B * K, 128, H, W]
-        cost_volumes = self.last_conv(cost_volumes) # [B * K, 128, H, W]
+        cost_volumes = F.interpolate(cost_volumes, size=(h*4, w*4), mode='bilinear', align_corners=False)
+        cost_volumes = self.out_conv2(cost_volumes) # [B * K, 128, H, W]
+        # cost_volumes = self.up_conv1(cost_volumes) # [B * K, 128, H//2, W//2]
+        # cost_volumes = self.gn1(cost_volumes) # [B * K, 128, H//2, W//2]
+        # cost_volumes = self.silu(cost_volumes) # [B * K, 128, H//2, W//2]
+        # cost_volumes = self.up_conv2(cost_volumes) # [B * K, 128, H, W]
+        # cost_volumes = self.gn2(cost_volumes) # [B * K, 128, H, W]
+        # cost_volumes = self.silu(cost_volumes) # [B * K, 128, H, W]
+        # cost_volumes = self.last_conv(cost_volumes) # [B * K, 128, H, W]
         cost_volumes = cost_volumes.reshape(b, k, self.feature_dim, h*4, w*4).permute(0, 1, 3, 4, 2) # [B, K, H, W, 128]
         # assert torch.isfinite(cost_volumes).all(), "cost_volumes is not finite"
         return cost_volumes # [B, K, H, W, 128]

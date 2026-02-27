@@ -28,10 +28,12 @@ class CostVolumeRefiner(L.LightningModule):
         self.res_enc2_1 = ResBlock4UNet(channels, channels, dtype)
         self.res_enc2_2 = ResBlock4UNet(channels, channels, dtype)
         self.down_conv2 = nn.Conv2d(channels, channels, 3, stride=2, padding=1, bias=False, dtype=dtype)
-        self.up_conv1 = nn.ConvTranspose2d(channels, channels, 4, stride=2, padding=1, bias=False, dtype=dtype)
+        # self.up_conv1 = nn.ConvTranspose2d(channels, channels, 4, stride=2, padding=1, bias=False, dtype=dtype)
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
         self.res_dec1_1 = ResBlock4UNet(channels*2, channels, dtype)
         self.res_dec1_2 = ResBlock4UNet(channels, channels, dtype)
-        self.up_conv2 = nn.ConvTranspose2d(channels, channels, 4, stride=2, padding=1, bias=False, dtype=dtype)
+        # self.up_conv2 = nn.ConvTranspose2d(channels, channels, 4, stride=2, padding=1, bias=False, dtype=dtype)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
         self.res_dec2_1 = ResBlock4UNet(channels*2, channels, dtype)
         self.res_dec2_2 = ResBlock4UNet(channels, channels, dtype)
         self.cross_block1 = SwinCrossBlock(channels, window_size=feat_map_size//4, shift_size=0, dtype=dtype) # only 1 window: not swinT
@@ -42,8 +44,10 @@ class CostVolumeRefiner(L.LightningModule):
         self.final_conv = nn.Conv2d(channels, channels, 1, stride=1, padding=0, bias=True, dtype=dtype)
         nn.init.kaiming_normal_(self.down_conv1.weight, mode='fan_out', nonlinearity='relu')
         nn.init.kaiming_normal_(self.down_conv2.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.kaiming_normal_(self.up_conv1.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.kaiming_normal_(self.up_conv2.weight, mode='fan_out', nonlinearity='relu')
+        # nn.init.kaiming_normal_(self.up_conv1.weight, mode='fan_out', nonlinearity='relu')
+        # nn.init.kaiming_normal_(self.up_conv2.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.kaiming_normal_(self.conv2.weight, mode='fan_out', nonlinearity='relu')
         nn.init.xavier_normal_(self.final_conv.weight)
         nn.init.constant_(self.final_conv.bias, 0)
         nn.init.constant_(self.final_gn.weight, 1)
@@ -80,11 +84,13 @@ class CostVolumeRefiner(L.LightningModule):
         # decoder
         # h4 = self.up_conv1(h3) # [B*K, 128, H//8, W//8]
         h4 = F.interpolate(h3, size=(h//2, w//2), mode='bilinear', align_corners=False)
+        h4 = self.conv1(h4) # [B*K, 128, H//8, W//8]
         h4 = torch.cat([h2, h4], dim=1) # [B*K, 256, H//8, W//8]
         h4 = self.res_dec1_1(h4) # [B*K, 128, H//8, W//8]
         h4 = self.res_dec1_2(h4) # [B*K, 128, H//8, W//8]
         # h5 = self.up_conv2(h4) # [B*K, 128, H//8, W//8]
         h5 = F.interpolate(h4, size=(h, w), mode='bilinear', align_corners=False)
+        h5 = self.conv2(h5) # [B*K, 128, H, W]
         h5 = torch.cat([h1, h5], dim=1) # [B*K, 256, H//4, W//4]
         out = self.res_dec2_1(h5) # [B*K, 128, H//4, W//4]
         out = self.res_dec2_2(out) # [B*K, 128, H//4, W//4]

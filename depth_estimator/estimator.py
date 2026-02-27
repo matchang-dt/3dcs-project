@@ -43,9 +43,19 @@ class DepthEstimator(L.LightningModule):
             dtype (torch.dtype): data type
         """
         super().__init__()
+        num_groups = channels // 16
         self.to(dtype)
         self.near = near
         self.far = far
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=True, dtype=dtype)
+        self.gn = nn.GroupNorm(num_groups=num_groups, num_channels=channels, eps=1e-6, dtype=dtype)
+        self.silu = nn.SiLU(inplace=True)
+        nn.init.kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.xavier_normal_(self.conv2.weight)
+        nn.init.constant_(self.conv2.bias, 0)
+        nn.init.constant_(self.gn.weight, 1)
+        nn.init.constant_(self.gn.bias, 0)
         self.refiner = DepthRefiner(channels, feat_map_size, dtype)
     
     def forward(self, cost_volume, images, features):
@@ -62,7 +72,12 @@ class DepthEstimator(L.LightningModule):
         b, k, H, W, d = cost_volume.shape # h=H//4, w=W//4
         images = images.reshape(-1, 3, H, W) # [B*K, 3, H, W]
         features = features.reshape(-1, H//4, W//4, d).permute(0, 3, 1, 2) # [B*K, 128, H//4, W//4]
+        features = F.interpolate(features, size=(H//2, W//2), mode='bilinear', align_corners=False) # [B*K, 128, H, W]
+        features = self.conv1(features) # [B*K, 128, H//2, W//2]
+        features = self.gn(features) # [B*K, 128, H//2, W//2]
+        features = self.silu(features) # [B*K, 128, H//2, W//2]
         features = F.interpolate(features, size=(H, W), mode='bilinear', align_corners=False) # [B*K, 128, H, W]
+        features = self.conv2(features) # [B*K, 128, H, W]
         inv_depth_map, depth_conf = inv_depth_estimate(cost_volume, self.near, self.far) # [B, K, H, W], [B, K, H, W]
         inv_depth_map_usq = inv_depth_map.reshape(-1, H, W).unsqueeze(1) # [B*K, 1, H, W]
         depth_conf_usq = depth_conf.reshape(-1, H, W).unsqueeze(1) # [B*K, 1, H, W]

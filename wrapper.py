@@ -11,6 +11,7 @@ import numpy as np
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
 from torchvision.utils import make_grid
+import wandb
 
 from model import MVSplat, MVSplatConfig
 from lpips import LPIPS
@@ -55,7 +56,7 @@ class LightningConfig:
     lpips_loss_weight: float = 0.05
     
     # Logging
-    log_images_every_n_steps: int = 1000
+    log_images_every_n_steps: int = 200
     val_check_interval: int = 5000
 
 
@@ -191,14 +192,30 @@ class MVSplatWrapper(L.LightningModule):
                 on_epoch=False,
             )
         depth_maps = outputs['depth_maps']
-        depth_maps_min = depth_maps.min()
-        depth_maps_max = depth_maps.max()
+        # depth_maps_min = depth_maps.min()
+        # depth_maps_max = depth_maps.max()
         depth_maps_mean = depth_maps.mean()
         depth_maps_std = depth_maps.std()
-        self.log("train/depth_maps_min", depth_maps_min, on_step=True, on_epoch=False)
-        self.log("train/depth_maps_max", depth_maps_max, on_step=True, on_epoch=False)
+        # self.log("train/depth_maps_min", depth_maps_min, on_step=True, on_epoch=False)
+        # self.log("train/depth_maps_max", depth_maps_max, on_step=True, on_epoch=False)
         self.log("train/depth_maps_mean", depth_maps_mean, prog_bar=True, on_step=True, on_epoch=False)
         self.log("train/depth_maps_std", depth_maps_std, on_step=True, on_epoch=False)
+        self.logger.experiment.log({"depth_map_hist": wandb.Histogram(depth_maps.detach().cpu())})
+        inv_depth_maps = 1 / depth_maps
+        self.logger.experiment.log({"inv_depth_map_hist": wandb.Histogram(inv_depth_maps.detach().cpu())})
+
+        # Take first batch
+        depth_b0 = depth_maps[0] if depth_maps.ndim == 4 else depth_maps  # [K, H, W]
+        q1 = torch.quantile(depth_b0.flatten(), 0.25)
+        q2 = torch.quantile(depth_b0.flatten(), 0.5)
+        q3 = torch.quantile(depth_b0.flatten(), 0.75)
+        self.log("train/depth_map_quartile", q1, on_step=True, on_epoch=False)
+        self.log("train/depth_map_midian", q2, on_step=True, on_epoch=False)
+        self.log("train/depth_map_upper_quartile", q3, on_step=True, on_epoch=False)
+        # vmax = torch.quantile(depth_b0.flatten(), 0.92, interpolation='lower')
+        # vmin = torch.quantile(depth_b0.flatten(), 0.0, interpolation='higher')
+        # self.log("train/depth_map_vmax", vmax, on_step=True, on_epoch=False)
+        # self.log("train/depth_map_vmin", vmin, on_step=True, on_epoch=False)
 
         # periodically log images during training
         if self.global_step % self.lightning_config.log_images_every_n_steps == 0:
@@ -322,8 +339,14 @@ class MVSplatWrapper(L.LightningModule):
                 context_depth_maps = outputs["depth_maps"]  # [B, K, H, W]
                 # Take first batch
                 context_depth_b0 = context_depth_maps[0] if context_depth_maps.ndim == 4 else context_depth_maps  # [K, H, W]
+                # vmax = torch.quantile(context_depth_b0.flatten(), 0.92, interpolation='lower')
+                # vmin = torch.quantile(context_depth_b0.flatten(), 0.0, interpolation='higher')
+                # context_depth_vis = (context_depth_b0 - vmin) / (vmax - vmin + 1e-6).clamp(0, 1)
+                # context_depth_jet_list = [_apply_jet_cmap(context_depth_vis[k]) for k in range(context_depth_vis.shape[0])]
+                # context_depth_stack = torch.stack(context_depth_jet_list, dim=0)  # [K, 3, H, W]
+                # context_depth_grid = make_grid(context_depth_stack, nrow=context_nrow, padding=4, normalize=False)
                 context_depth_global_max = context_depth_b0.max() + 1e-6
-                context_depth_vis = (context_depth_b0 / context_depth_global_max).clamp(0, 1)
+                context_depth_vis = ((context_depth_b0 / context_depth_global_max) * 10).clamp(0, 1)
                 context_depth_jet_list = [_apply_jet_cmap(context_depth_vis[k]) for k in range(context_depth_vis.shape[0])]
                 context_depth_stack = torch.stack(context_depth_jet_list, dim=0)  # [K, 3, H, W]
                 context_depth_grid = make_grid(context_depth_stack, nrow=context_nrow, padding=4, normalize=False)
@@ -361,12 +384,12 @@ class MVSplatWrapper(L.LightningModule):
                     images=[diff_grid.cpu().permute(1, 2, 0).numpy()],
                     caption=["|rendered - target| (jet)"],
                 )
-                if depth_grid is not None:
-                    self.logger.log_image(
-                        key="val/depth_grid",
-                        images=[depth_grid.cpu().permute(1, 2, 0).numpy()],
-                        caption=["rendered depth (jet)"],
-                    )
+                # if depth_grid is not None:
+                #     self.logger.log_image(
+                #         key="val/depth_grid",
+                #         images=[depth_grid.cpu().permute(1, 2, 0).numpy()],
+                #         caption=["rendered depth (jet)"],
+                #     )
                 if context_depth_grid is not None:
                     self.logger.log_image(
                         key="val/context_depth_grid",

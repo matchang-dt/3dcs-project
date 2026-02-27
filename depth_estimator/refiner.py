@@ -50,16 +50,20 @@ class DepthRefiner(L.LightningModule):
         self.res_enc4_1 = ResBlock4UNet(channels, channels, dtype)
         self.res_enc4_2 = ResBlock4UNet(channels, channels, dtype)
         self.down_conv4 = nn.Conv2d(channels, channels, 3, stride=2, padding=1, bias=False, dtype=dtype)
-        self.up_conv1 = nn.ConvTranspose2d(channels, channels, 4, stride=2, padding=1, bias=False, dtype=dtype)
+        # self.up_conv1 = nn.ConvTranspose2d(channels, channels, 4, stride=2, padding=1, bias=False, dtype=dtype)
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
         self.res_dec1_1 = ResBlock4UNet(channels*2, channels, dtype)
         self.res_dec1_2 = ResBlock4UNet(channels, channels, dtype)
-        self.up_conv2 = nn.ConvTranspose2d(channels, channels, 4, stride=2, padding=1, bias=False, dtype=dtype)
+        # self.up_conv2 = nn.ConvTranspose2d(channels, channels, 4, stride=2, padding=1, bias=False, dtype=dtype)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
         self.res_dec2_1 = ResBlock4UNet(channels*2, channels, dtype)
         self.res_dec2_2 = ResBlock4UNet(channels, channels, dtype)
-        self.up_conv3 = nn.ConvTranspose2d(channels, channels, 4, stride=2, padding=1, bias=False, dtype=dtype)
+        # self.up_conv3 = nn.ConvTranspose2d(channels, channels, 4, stride=2, padding=1, bias=False, dtype=dtype)
+        self.conv3 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
         self.res_dec3_1 = ResBlock4UNet(channels*2, channels, dtype)
         self.res_dec3_2 = ResBlock4UNet(channels, channels, dtype)
-        self.up_conv4 = nn.ConvTranspose2d(channels, channels, 4, stride=2, padding=1, bias=False, dtype=dtype)
+        # self.up_conv4 = nn.ConvTranspose2d(channels, channels, 4, stride=2, padding=1, bias=False, dtype=dtype)
+        self.conv4 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
         self.res_dec4_1 = ResBlock4UNet(channels*2, channels, dtype)
         self.res_dec4_2 = ResBlock4UNet(channels, channels, dtype)
         self.cross_block1 = SwinCrossBlock(channels, window_size=feat_map_size//16, shift_size=0, dtype=dtype) # only 1 window: not swinT
@@ -74,10 +78,14 @@ class DepthRefiner(L.LightningModule):
         nn.init.xavier_normal_(self.down_conv2.weight)
         nn.init.xavier_normal_(self.down_conv3.weight)
         nn.init.xavier_normal_(self.down_conv4.weight)
-        nn.init.xavier_normal_(self.up_conv1.weight)
-        nn.init.xavier_normal_(self.up_conv2.weight)
-        nn.init.xavier_normal_(self.up_conv3.weight)
-        nn.init.xavier_normal_(self.up_conv4.weight)
+        # nn.init.xavier_normal_(self.up_conv1.weight)
+        # nn.init.xavier_normal_(self.up_conv2.weight)
+        # nn.init.xavier_normal_(self.up_conv3.weight)
+        # nn.init.xavier_normal_(self.up_conv4.weight)
+        nn.init.kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.kaiming_normal_(self.conv2.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.kaiming_normal_(self.conv3.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.kaiming_normal_(self.conv4.weight, mode='fan_out', nonlinearity='relu')
         nn.init.xavier_normal_(self.final_conv.weight)
         nn.init.constant_(self.final_conv.bias, 0)
         nn.init.constant_(self.final_gn.weight, 1)
@@ -124,21 +132,25 @@ class DepthRefiner(L.LightningModule):
         # decoder
         # h6 = self.up_conv1(h5) # [B*K, 128, H//8, W//8]
         h6 = F.interpolate(h5, size=(H//8, W//8), mode='bilinear', align_corners=False)
+        h6 = self.conv1(h6) # [B*K, 128, H//8, W//8]
         h6 = torch.cat([h4, h6], dim=1) # [B*K, 256, H//8, W//8]
         h6 = self.res_dec1_1(h6) # [B*K, 128, H//8, W//8]
         h6 = self.res_dec1_2(h6) # [B*K, 128, H//8, W//8]
         # h7 = self.up_conv2(h6) # [B*K, 128, H//8, W//8]
         h7 = F.interpolate(h6, size=(H//4, W//4), mode='bilinear', align_corners=False)
+        h7 = self.conv2(h7) # [B*K, 128, H//4, W//4]
         h7 = torch.cat([h3, h7], dim=1) # [B*K, 256, H//4, W//4]
         h7 = self.res_dec2_1(h7) # [B*K, 128, H//4, W//4]
         h7 = self.res_dec2_2(h7) # [B*K, 128, H//4, W//4]
         # h8 = self.up_conv3(h7) # [B*K, 128, H//4, W//4]
         h8 = F.interpolate(h7, size=(H//2, W//2), mode='bilinear', align_corners=False)
+        h8 = self.conv3(h8) # [B*K, 128, H//2, W//2]
         h8 = torch.cat([h2, h8], dim=1) # [B*K, 256, H//2, W//2]
         h8 = self.res_dec3_1(h8) # [B*K, 128, H//2, W//2]
         h8 = self.res_dec3_2(h8) # [B*K, 128, H//2, W//2]
         # h9 = self.up_conv4(h8) # [B*K, 128, H//2, W//2]
         h9 = F.interpolate(h8, size=(H, W), mode='bilinear', align_corners=False)
+        h9 = self.conv4(h9) # [B*K, 128, H, W]
         h9 = torch.cat([h1, h9], dim=1) # [B*K, 256, H, W]
         h9 = self.res_dec4_1(h9) # [B*K, 128, H, W]
         h9 = self.res_dec4_2(h9) # [B*K, 128, H, W]
