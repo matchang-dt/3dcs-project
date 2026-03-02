@@ -40,6 +40,7 @@ class Re10kDatasetCfg:
     max_train_steps: int = 300000
     view_sampler: ViewSampler = None
     normalize_scene: bool = False
+    limit_scenes: Optional[int] = None  # If set, only iterate this many scenes (e.g. for val subset)
 
 class Re10kDataset(IterableDataset):    
     def __init__(
@@ -92,6 +93,7 @@ class Re10kDataset(IterableDataset):
 
         self.current_step = 0  # tracking steps for pair distances
         self.dataset_name = "re10k"
+        self.limit_scenes = getattr(cfg, "limit_scenes", None)
     
     def set_training_step(self, step: int):
         """Update current training step for baseline expansion."""
@@ -227,7 +229,7 @@ class Re10kDataset(IterableDataset):
             return None
     
     def __iter__(self):
-        """Iterate over all scenes in all shards."""
+        """Iterate over all scenes in all shards (optionally limited to first limit_scenes scenes)."""
         worker_info = torch.utils.data.get_worker_info()
         
         if worker_info is None:
@@ -239,7 +241,10 @@ class Re10kDataset(IterableDataset):
             worker_id = worker_info.id
             shard_files = [f for i, f in enumerate(self.shard_files) if i % num_workers == worker_id]
         
+        scenes_yielded = 0
         for shard_file in shard_files:
+            if self.limit_scenes is not None and scenes_yielded >= self.limit_scenes:
+                return
             try:
                 # Load shard (list of scene dicts)
                 scenes = torch.load(shard_file)
@@ -290,6 +295,9 @@ class Re10kDataset(IterableDataset):
                         'far_plane': scene_dict.get('far_plane', 100.0),
                     }
                     yield batch
+                    scenes_yielded += 1
+                    if self.limit_scenes is not None and scenes_yielded >= self.limit_scenes:
+                        return
                     
             except Exception as e:
                 print(f"Error loading shard {shard_file}: {e}")

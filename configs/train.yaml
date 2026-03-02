@@ -11,6 +11,11 @@ dataset:
   max_train_steps: 300000
   normalize_scene: false
 
+# Validation: first 10 scenes from re10k/test
+val_dataset:
+  stage: test
+  limit_scenes: 10
+
 # Optimizer
 optimizer:
   name: adam
@@ -26,16 +31,17 @@ scheduler:
   warmup_steps: 2000
 
 # Training parameters
-batch_size: 6
+batch_size: 5
 num_workers: 4
 max_steps: 300000
-val_check_interval: 5000
+check_val_every_n_epoch: 1000  # validation every N epochs (epoch-based, works with IterableDataset) step/epoch = 1.69
 # log_every_n_steps: 1000
 log_every_n_steps: 10
-# log_images_every_n_steps: 1000
 log_images_every_n_steps: 1000
 gradient_clip_val: 1.0
 num_gpus: 1  # adjust this in command line
+depth_map_vmin: 0.02
+depth_map_vmax: 0.98
 
 # Loss configuration
 loss:
@@ -45,7 +51,7 @@ loss:
 # Checkpointing
 checkpoint:
   save_top_k: 3
-  monitor: val/loss
+  monitor: train/loss
   mode: min
   save_last: true
   dirpath: checkpoints/

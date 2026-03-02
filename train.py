@@ -17,7 +17,7 @@ from lightning.pytorch.callbacks import Callback, ModelCheckpoint, LearningRateM
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
 from torch.utils.data import DataLoader
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
 from model import MVSplatConfig
 from wrapper import MVSplatWrapper, LightningConfig
@@ -84,6 +84,8 @@ def create_model_from_hydra_config(cfg: DictConfig) -> MVSplatWrapper:
         num_surfaces=cfg.num_surfaces,
         decoder_cfg=decoder_cfg,
         dataset_cfg=None,
+        depth_map_vmin=cfg.depth_map_vmin,
+        depth_map_vmax=cfg.depth_map_vmax,
     )
     
     # Create Lightning config
@@ -99,7 +101,6 @@ def create_model_from_hydra_config(cfg: DictConfig) -> MVSplatWrapper:
         rgb_loss_weight=cfg.loss.rgb_loss_weight,
         lpips_loss_weight=cfg.loss.lpips_loss_weight,
         log_images_every_n_steps=cfg.log_images_every_n_steps,
-        val_check_interval=cfg.val_check_interval,
     )
     
     # Create and return Lightning wrapper
@@ -175,6 +176,11 @@ def main(cfg: DictConfig):
     print("\nCreating datasets...")
     train_dataset = Re10kDataset(cfg=cfg.dataset)
     
+    # Validation: merge dataset base config with val_dataset overrides (test, first 10 scenes)
+    val_dataset_cfg = OmegaConf.merge(OmegaConf.create(OmegaConf.to_container(cfg.dataset, resolve=True)),
+                                       OmegaConf.create(OmegaConf.to_container(cfg.get("val_dataset", {}), resolve=True)))
+    val_dataset = Re10kDataset(cfg=val_dataset_cfg)
+    
     # Create dataloaders
     train_loader = DataLoader(
         train_dataset,
@@ -183,8 +189,16 @@ def main(cfg: DictConfig):
         collate_fn=collate_fn,
         pin_memory=True,
     )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=cfg.batch_size,
+        num_workers=0,  # single process so "first 10 scenes" is deterministic
+        collate_fn=collate_fn,
+        pin_memory=True,
+    )
     
-    print(f"Train dataset created")
+    print("Train dataset created (re10k/train)")
+    print("Val dataset created (re10k/test, first 10 scenes)")
     
     # Create model
     print("\nCreating model...")
@@ -220,7 +234,7 @@ def main(cfg: DictConfig):
         callbacks=[checkpoint_callback, lr_monitor, step_callback],
         logger=logger,
         log_every_n_steps=cfg.log_every_n_steps,
-        val_check_interval=cfg.val_check_interval,
+        check_val_every_n_epoch=cfg.check_val_every_n_epoch,
         gradient_clip_val=cfg.gradient_clip_val,
         deterministic=False,
     )
@@ -230,7 +244,7 @@ def main(cfg: DictConfig):
     print(f"Logs will be saved to: {logger.log_dir}")
     print(f"Checkpoints will be saved to: {cfg.checkpoint.dirpath}")
 
-    trainer.fit(model, train_loader)
+    trainer.fit(model, train_loader, val_dataloaders=val_loader)
 
     print("\nTraining complete!")
 
