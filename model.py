@@ -1,16 +1,22 @@
 import torch
 import torch.nn as nn
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, Union
 
 from extractor.extractor import Extractor
 from cost_volume_constructor.constructor import CostVolumeConstructor
 from depth_estimator.estimator import DepthEstimator
 from gaussian_adapter.gaussian_head import GaussianHead, GaussianHeadConfig
 from gaussian_adapter.gaussian_adapter import GaussianAdapterCfg
+from convex_adapter.convex_head import ConvexHead, ConvexHeadConfig
+from convex_adapter.convex_adapter import ConvexAdapterCfg
 from decoder.decoder_cuda_splatting_gaussians import (
     DecoderGaussianSplattingCUDA,
     DecoderGaussianSplattingCUDACfg,
+)
+from decoder.decoder_cuda_splatting_convexes import (
+    DecoderConvexSplattingCUDA,
+    DecoderConvexSplattingCUDACfg,
 )
 from datasets.dataset import DatasetCfg
 from utils.projection import make_proj_matrix
@@ -35,7 +41,7 @@ class MVSplatConfig:
     far: float = 100.0
     feature_dim: int = 128
 
-    # Gaussian head params
+    # Splat head params (shared between Gaussian and Convex heads)
     gaussian_head_channels: int = 132  # 128 (features) + 4 (RGB + depth)
     opacity_start: float = 0.5
     opacity_end: float = 2.0
@@ -49,9 +55,19 @@ class MVSplatConfig:
     gaussians_per_pixel: int = 1
     num_surfaces: int = 1
 
+    # Convex splat params (only used when use_convex=True)
+    use_convex: bool = False
+    nb_points: int = 6           # K: vertices per convex splat (max 8 per CUDA config)
+    splat_scale_pct: float = 0.1 # analogous to gaussian_scale_pct
+
     # Decoder params
-    decoder_cfg: Optional[DecoderGaussianSplattingCUDACfg] = None
+    decoder_cfg: Optional[Union[DecoderGaussianSplattingCUDACfg, DecoderConvexSplattingCUDACfg]] = None
     dataset_cfg: Optional[DatasetCfg] = None
+
+    @property
+    def head_channels(self) -> int:
+        """Alias so both Gaussian and Convex heads use the same field."""
+        return self.gaussian_head_channels
 
 class MVSplat(nn.Module):
     """
@@ -61,8 +77,11 @@ class MVSplat(nn.Module):
     1. Extractor: Extract features from input images
     2. Cost Volume Constructor: Build cost volume from features
     3. Depth Estimator: Estimate depth maps from cost volume
-    4. Gaussian Head: Predict gaussian parameters and convert to 3D gaussians
-    5. Decoder: Render gaussian splats to images
+    4. Splat Head: Predict splat parameters (Gaussian or Convex) from depth + features
+    5. Decoder: Render splats to images via CUDA rasterizer
+
+    Set cfg.use_convex=True to use convex splats (ConvexHead + DecoderConvexSplattingCUDA)
+    instead of the default Gaussian splats.
     """
 
     def __init__(self, cfg: MVSplatConfig):
@@ -96,28 +115,52 @@ class MVSplat(nn.Module):
             dtype=cfg.pipeline_dtype,
         )
 
-        gaussian_adapter_cfg = GaussianAdapterCfg(
-            sh_degree=cfg.sh_degree,
-            scale_min=cfg.scale_min,
-            scale_max=cfg.scale_max,
-            gaussian_scale_pct=cfg.gaussian_scale_pct,
-            gaussians_per_pixel=cfg.gaussians_per_pixel,
-            num_surfaces=cfg.num_surfaces,
-        )
+        if cfg.use_convex:
+            convex_adapter_cfg = ConvexAdapterCfg(
+                sh_degree=cfg.sh_degree,
+                nb_points=cfg.nb_points,
+                scale_min=cfg.scale_min,
+                scale_max=cfg.scale_max,
+                splat_scale_pct=cfg.splat_scale_pct,
+                splats_per_pixel=cfg.gaussians_per_pixel,
+                num_surfaces=cfg.num_surfaces,
+            )
+            convex_head_cfg = ConvexHeadConfig(
+                channels=cfg.gaussian_head_channels,
+                opacity_start=cfg.opacity_start,
+                opacity_end=cfg.opacity_end,
+                opacity_warmup=cfg.opacity_warmup,
+                convex_adapter_config=convex_adapter_cfg,
+            )
+            self.splat_head = ConvexHead(convex_head_cfg)
 
-        gaussian_head_cfg = GaussianHeadConfig(
-            channels=cfg.gaussian_head_channels,
-            opacity_start=cfg.opacity_start,
-            opacity_end=cfg.opacity_end,
-            opacity_warmup=cfg.opacity_warmup,
-            gaussian_adapter_config=gaussian_adapter_cfg,
-        )
+            if cfg.decoder_cfg is None:
+                cfg.decoder_cfg = DecoderConvexSplattingCUDACfg(
+                    name="cuda_convex_splatting",
+                    sh_degree=cfg.sh_degree,
+                )
+            self.decoder = DecoderConvexSplattingCUDA(cfg.decoder_cfg, cfg.dataset_cfg)
+        else:
+            gaussian_adapter_cfg = GaussianAdapterCfg(
+                sh_degree=cfg.sh_degree,
+                scale_min=cfg.scale_min,
+                scale_max=cfg.scale_max,
+                gaussian_scale_pct=cfg.gaussian_scale_pct,
+                gaussians_per_pixel=cfg.gaussians_per_pixel,
+                num_surfaces=cfg.num_surfaces,
+            )
+            gaussian_head_cfg = GaussianHeadConfig(
+                channels=cfg.gaussian_head_channels,
+                opacity_start=cfg.opacity_start,
+                opacity_end=cfg.opacity_end,
+                opacity_warmup=cfg.opacity_warmup,
+                gaussian_adapter_config=gaussian_adapter_cfg,
+            )
+            self.splat_head = GaussianHead(gaussian_head_cfg)
 
-        self.gaussian_head = GaussianHead(gaussian_head_cfg)
-
-        if cfg.decoder_cfg is None:
-            cfg.decoder_cfg = DecoderGaussianSplattingCUDACfg(name="cuda_gaussian_splatting")
-        self.decoder = DecoderGaussianSplattingCUDA(cfg.decoder_cfg, cfg.dataset_cfg)
+            if cfg.decoder_cfg is None:
+                cfg.decoder_cfg = DecoderGaussianSplattingCUDACfg(name="cuda_gaussian_splatting")
+            self.decoder = DecoderGaussianSplattingCUDA(cfg.decoder_cfg, cfg.dataset_cfg)
 
     def forward(self, batch, global_step=0, render_depth=False):
         """
@@ -179,8 +222,8 @@ class MVSplat(nn.Module):
         f = far_plane.max() if isinstance(far_plane, torch.Tensor) else far_plane
         depth_maps = torch.clamp(depth_maps, min=n+1e-4, max=f-1e-4)
 
-        # 4. Gaussians (head calls adapter internally)
-        gaussians = self.gaussian_head(
+        # 4. Splat head: predict parameters and lift to 3-D (head calls adapter internally)
+        splats = self.splat_head(
             depth_map=depth_maps,
             depth_conf=depth_conf,
             images=context_images,
@@ -190,32 +233,49 @@ class MVSplat(nn.Module):
             global_step=global_step,
         )
 
-        B_g, V_g = gaussians.means.shape[:2]
+        B_g, V_g = splats.means.shape[:2]
         rays = H * W
         srf = self.cfg.num_surfaces
         gpp = self.cfg.gaussians_per_pixel
         G = V_g * rays * srf * gpp
 
-        gaussians.means = gaussians.means.reshape(B_g, G, 3)
-        gaussians.covariances = gaussians.covariances.reshape(B_g, G, 3, 3)
-        gaussians.harmonics = gaussians.harmonics.reshape(B_g, G, 3, -1)
-        gaussians.opacities = gaussians.opacities.reshape(B_g, G)
+        # Flatten the (V, H*W, srf, gpp, ...) spatial dims into a single G dimension.
+        splats.means      = splats.means.reshape(B_g, G, 3)
+        splats.harmonics  = splats.harmonics.reshape(B_g, G, 3, -1)
+        splats.opacities  = splats.opacities.reshape(B_g, G)
 
-        depth_mode = "depth" if render_depth else None
-        rendered = self.decoder(
-            gaussians=gaussians,
-            extrinsics=target_extrinsics,
-            intrinsics=target_intrinsics,
-            near=near_plane,
-            far=far_plane,
-            image_shape=(H, W),
-            depth_mode=depth_mode,
-        )
+        if self.cfg.use_convex:
+            K = self.cfg.nb_points
+            splats.convex_points = splats.convex_points.reshape(B_g, G, K, 3)
+            splats.delta         = splats.delta.reshape(B_g, G, 1)
+            splats.sigma         = splats.sigma.reshape(B_g, G, 1)
+
+            rendered = self.decoder(
+                convex_splats=splats,
+                extrinsics=target_extrinsics,
+                intrinsics=target_intrinsics,
+                near=near_plane,
+                far=far_plane,
+                image_shape=(H, W),
+            )
+        else:
+            splats.covariances = splats.covariances.reshape(B_g, G, 3, 3)
+
+            depth_mode = "depth" if render_depth else None
+            rendered = self.decoder(
+                gaussians=splats,
+                extrinsics=target_extrinsics,
+                intrinsics=target_intrinsics,
+                near=near_plane,
+                far=far_plane,
+                image_shape=(H, W),
+                depth_mode=depth_mode,
+            )
 
         return {
             "rendered_images": rendered["color"],
             "rendered_depth": rendered["depth"],
             "depth_maps": depth_maps,
             "depth_conf": depth_conf,
-            "gaussians": gaussians,
+            "splats": splats,
         }

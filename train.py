@@ -21,6 +21,7 @@ from omegaconf import DictConfig, OmegaConf
 from model import MVSplatConfig
 from wrapper import MVSplatWrapper, LightningConfig
 from decoder.decoder_cuda_splatting_gaussians import DecoderGaussianSplattingCUDACfg
+from decoder.decoder_cuda_splatting_convexes import DecoderConvexSplattingCUDACfg
 from datasets.dataset import DatasetCfg, DATASETS
 
 
@@ -51,16 +52,25 @@ def create_model_from_hydra_config(cfg: DictConfig) -> MVSplatWrapper:
     Returns:
         MVSplatWrapper ready for training
     """
-    # Create decoder config
-    decoder_cfg = DecoderGaussianSplattingCUDACfg(name="cuda_gaussian_splatting")
-    
     # Convert dtype strings to torch dtypes
     dtype_map = {
         'float32': torch.float32,
         'float16': torch.float16,
         'bfloat16': torch.bfloat16,
     }
-    
+
+    use_convex: bool = cfg.get("use_convex", False)
+    sh_degree: int   = cfg.sh_degree
+
+    # Pick the decoder config that matches the chosen splat representation
+    if use_convex:
+        decoder_cfg = DecoderConvexSplattingCUDACfg(
+            name="cuda_convex_splatting",
+            sh_degree=sh_degree,
+        )
+    else:
+        decoder_cfg = DecoderGaussianSplattingCUDACfg(name="cuda_gaussian_splatting")
+
     # Create model config
     model_config = MVSplatConfig(
         image_size=cfg.image_size,
@@ -74,12 +84,15 @@ def create_model_from_hydra_config(cfg: DictConfig) -> MVSplatWrapper:
         opacity_start=cfg.opacity_start,
         opacity_end=cfg.opacity_end,
         opacity_warmup=cfg.opacity_warmup,
-        sh_degree=cfg.sh_degree,
+        sh_degree=sh_degree,
         scale_min=cfg.scale_min,
         scale_max=cfg.scale_max,
         gaussian_scale_pct=cfg.gaussian_scale_pct,
         gaussians_per_pixel=cfg.gaussians_per_pixel,
         num_surfaces=cfg.num_surfaces,
+        use_convex=use_convex,
+        nb_points=cfg.get("nb_points", 6),
+        splat_scale_pct=cfg.get("splat_scale_pct", 0.1),
         decoder_cfg=decoder_cfg,
         dataset_cfg=None,
     )
@@ -224,12 +237,22 @@ def main(cfg: DictConfig):
         deterministic=False,
     )
     
+    # Resume from checkpoint if requested
+    ckpt_path = cfg.get("resume_from_checkpoint", None)
+    if ckpt_path is not None and str(ckpt_path).lower() in ("none", "null", ""):
+        ckpt_path = None
+    if ckpt_path is not None:
+        ckpt_path = str(ckpt_path)
+        if not os.path.isfile(ckpt_path):
+            raise FileNotFoundError(f"Resume checkpoint not found: {ckpt_path}")
+        print(f"Resuming from checkpoint: {ckpt_path}")
+
     # Train
     print("\nStarting training...")
     print(f"Logs will be saved to: {logger.log_dir}")
     print(f"Checkpoints will be saved to: {cfg.checkpoint.dirpath}")
 
-    trainer.fit(model, train_loader)
+    trainer.fit(model, train_loader, ckpt_path=ckpt_path)
 
     print("\nTraining complete!")
 

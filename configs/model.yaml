@@ -17,16 +17,23 @@ feature_dim: 128
 near: 1.0  
 far: 100.0
 
-# Gaussian head
+# Splat head (shared between Gaussian and Convex heads)
 gaussian_head_channels: 132 # 128 (features) + 4 (RGB + depth)
 opacity_start: 0.5
 opacity_end: 2.0
 opacity_warmup: 10000
 
-# Gaussian adapter
+# Shared splat adapter params
 sh_degree: 4
 scale_min: 0.5
 scale_max: 15.0
-gaussian_scale_pct: 0.1
 gaussians_per_pixel: 1
 num_surfaces: 1
+
+# Gaussian-specific adapter params
+gaussian_scale_pct: 0.1
+
+# Convex splat params
+use_convex: false # false: render gaussians, true: render convexes
+nb_points: 6       # vertices per convex (6 default from paper)
+splat_scale_pct: 0.1
