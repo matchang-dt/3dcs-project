@@ -22,6 +22,8 @@ class DatasetCfg:
     target_image_size: int = 256  # target image size
     max_train_steps: int = 300000  # For baseline expansion
     background_color: tuple[float, float, float] = (0.0, 0.0, 0.0)  # RGB for renderer
+    normalize_scene: bool = False  # e.g. RE10K/ACID: center and scale scene
+    make_baseline_1: bool = False  # e.g. RE10K: scale so context views baseline = 1
 
 
 # Registry of available datasets

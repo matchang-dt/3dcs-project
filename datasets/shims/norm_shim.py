@@ -3,7 +3,7 @@ Shim that normalizes images and intrinsics.
 """
 
 import torch
-from typing import Literal
+from typing import Literal, Tuple
 from ..view_sampler.view_sampler import ViewSet
 
 def already_normalized(tensor: torch.Tensor, type: Literal["images", "intrinsics"]) -> bool:
@@ -132,3 +132,34 @@ def normalize_scene(viewset: ViewSet, target_radius: float = 1.0) -> ViewSet:
         intrinsics=viewset.intrinsics,
         images=viewset.images
     ), {'centroid': centroid, 'scale': scale, 'max_baseline': max_baseline} # supplementary
+
+def make_baseline_1(context_views: ViewSet, target_views: ViewSet) -> Tuple[ViewSet, ViewSet, float]:
+    """
+    Scale context and target views so the baseline between the two context cameras has length 1.
+    Returns (scaled_context_views, scaled_target_views, scale). Callers should set near_plane /= scale, far_plane /= scale.
+    """
+    assert context_views.images.shape[0] == 2, "make_baseline_1 only supports 2 context views"
+    ctx_extrinsics = context_views.extrinsics
+    ctx_c2w = torch.linalg.inv(ctx_extrinsics)
+    ctx1, ctx2 = ctx_c2w[0, :3, 3], ctx_c2w[1, :3, 3]
+    scale = (ctx1 - ctx2).norm().item()
+
+    ctx_c2w = ctx_c2w.clone()
+    ctx_c2w[:, :3, 3] /= scale
+
+    ctx_viewset = ViewSet(
+        extrinsics=torch.linalg.inv(ctx_c2w),
+        intrinsics=context_views.intrinsics,
+        images=context_views.images,
+    )
+
+    tgt_extrinsics = target_views.extrinsics
+    tgt_c2w = torch.linalg.inv(tgt_extrinsics).clone()
+    tgt_c2w[:, :3, 3] /= scale
+
+    tgt_viewset = ViewSet(
+        extrinsics=torch.linalg.inv(tgt_c2w),
+        intrinsics=target_views.intrinsics,
+        images=target_views.images,
+    )
+    return ctx_viewset, tgt_viewset, scale

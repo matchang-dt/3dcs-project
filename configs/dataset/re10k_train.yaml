@@ -17,3 +17,4 @@ target_image_size: 256
 # Training schedule
 max_train_steps: 300000  # Baseline expansion over 300k steps
 normalize_scene: false
+make_baseline_1: true  # scale context (and target) so context baseline = 1; near/far scaled accordingly

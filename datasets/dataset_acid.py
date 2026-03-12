@@ -23,7 +23,7 @@ import numpy as np
 from einops import rearrange, repeat
 from .view_sampler.view_sampler import ViewSet, ViewSampler, ViewSamplerDefault
 from .shims.crop_shim import apply_crop_shim_to_views
-from .shims.norm_shim import normalize_scene, normalize_intrinsics
+from .shims.norm_shim import normalize_scene, normalize_intrinsics, make_baseline_1
 
 
 # ! CAREFUL WITH THIS AND RE10K DATASETS
@@ -41,6 +41,7 @@ class AcidDatasetCfg:
     max_train_steps: int = 300000
     view_sampler: ViewSampler = None
     normalize_scene: bool = False
+    make_baseline_1: bool = False
 
 class AcidDataset(IterableDataset):    
     def __init__(
@@ -252,10 +253,6 @@ class AcidDataset(IterableDataset):
                     if all_views is None:
                         continue
 
-                    # Center and normalize scene using all cameras
-                    if self.cfg.normalize_scene:
-                        all_views, _ = normalize_scene(all_views)
-                    
                     # Sample context and target views
                     try:
                         context_views, target_views = self.view_sampler.sample_views(
@@ -273,6 +270,17 @@ class AcidDataset(IterableDataset):
                         or (self.num_input_views + self.num_target_views) > all_views.images.shape[0]:
                         print(f"Skipping scene {scene_dict.get('key', 'unknown')} because number of views is not expected")
                         continue
+
+                    near_plane = scene_dict.get('near_plane', 1.0)
+                    far_plane = scene_dict.get('far_plane', 100.0)
+
+                    if getattr(self.cfg, "make_baseline_1", False):
+                        context_views, target_views, scale = make_baseline_1(
+                            context_views,
+                            target_views,
+                        )
+                        near_plane /= scale
+                        far_plane /= scale
                     
                     # Return as a batch-ready dict
                     batch = {
@@ -287,8 +295,8 @@ class AcidDataset(IterableDataset):
                             'extrinsics': target_views.extrinsics,  # [num_target_views, 4, 4]
                         },
                         'scene_key': scene_dict.get('key', 'unknown'),
-                        'near_plane': scene_dict.get('near_plane', 1.0),
-                        'far_plane': scene_dict.get('far_plane', 100.0),
+                        'near_plane': near_plane,
+                        'far_plane': far_plane,
                     }
                     yield batch
                     
