@@ -274,10 +274,12 @@ class Re10kDataset(IterableDataset):
                     far_plane = scene_dict.get('far_plane', 100.0)
 
                     if getattr(self.cfg, "make_baseline_1", False):
+                        # scale all views so context baseline = 1
                         context_views, target_views, scale = make_baseline_1(
                             context_views,
                             target_views,
                         )
+                        # scale planes accordingly as well
                         near_plane /= scale
                         far_plane /= scale
                     

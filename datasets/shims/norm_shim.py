@@ -139,26 +139,24 @@ def make_baseline_1(context_views: ViewSet, target_views: ViewSet) -> Tuple[View
     Returns (scaled_context_views, scaled_target_views, scale). Callers should set near_plane /= scale, far_plane /= scale.
     """
     assert context_views.images.shape[0] == 2, "make_baseline_1 only supports 2 context views"
-    ctx_extrinsics = context_views.extrinsics
-    ctx_c2w = torch.linalg.inv(ctx_extrinsics)
-    ctx1, ctx2 = ctx_c2w[0, :3, 3], ctx_c2w[1, :3, 3]
-    scale = (ctx1 - ctx2).norm().item()
+    ctx_w2c = context_views.extrinsics.clone()
+    tgt_w2c = target_views.extrinsics.clone()
+    R = ctx_w2c[:, :3, :3]
+    t = ctx_w2c[:, :3, 3:4]  # (2, 3, 1) for batched matmul
+    cam_pos = (-R.transpose(-1, -2) @ t).squeeze(-1)  # (2, 3)
+    scale = (cam_pos[0] - cam_pos[1]).norm().item()
 
-    ctx_c2w = ctx_c2w.clone()
-    ctx_c2w[:, :3, 3] /= scale
+    ctx_w2c[:, :3, 3] /= scale
+    tgt_w2c[:, :3, 3] /= scale
 
     ctx_viewset = ViewSet(
-        extrinsics=torch.linalg.inv(ctx_c2w),
+        extrinsics=ctx_w2c,
         intrinsics=context_views.intrinsics,
         images=context_views.images,
     )
 
-    tgt_extrinsics = target_views.extrinsics
-    tgt_c2w = torch.linalg.inv(tgt_extrinsics).clone()
-    tgt_c2w[:, :3, 3] /= scale
-
     tgt_viewset = ViewSet(
-        extrinsics=torch.linalg.inv(tgt_c2w),
+        extrinsics=tgt_w2c,
         intrinsics=target_views.intrinsics,
         images=target_views.images,
     )
