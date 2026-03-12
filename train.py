@@ -22,8 +22,7 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 from model import MVSplatConfig
 from wrapper import MVSplatWrapper, LightningConfig
 from decoder.decoder_cuda_splatting_gaussians import DecoderGaussianSplattingCUDACfg
-from datasets.dataset import DatasetCfg
-from datasets.dataset_re10k import Re10kDataset
+from datasets.dataset import DatasetCfg, DATASETS
 
 
 class UpdateDatasetGlobalStepCallback(Callback):
@@ -173,14 +172,13 @@ def main(cfg: DictConfig):
 
     print(f"Config: {cfg}")
     
-    # Create datasets
+    # Create datasets (class from registry by cfg.dataset.name: re10k, acid, etc.)
     print("\nCreating datasets...")
-    train_dataset = Re10kDataset(cfg=cfg.dataset)
-    
-    # Validation: merge dataset base config with val_dataset overrides (test, first 10 scenes)
+    dataset_cls = DATASETS[cfg.dataset.name]
+    train_dataset = dataset_cls(cfg=cfg.dataset)
     val_dataset_cfg = OmegaConf.merge(OmegaConf.create(OmegaConf.to_container(cfg.dataset, resolve=True)),
                                        OmegaConf.create(OmegaConf.to_container(cfg.get("val_dataset", {}), resolve=True)))
-    val_dataset = Re10kDataset(cfg=val_dataset_cfg)
+    val_dataset = dataset_cls(cfg=val_dataset_cfg)
     
     # Create dataloaders
     train_loader = DataLoader(
@@ -198,9 +196,9 @@ def main(cfg: DictConfig):
         pin_memory=True,
     )
     
-    print("Train dataset created (re10k/train)")
+    print(f"Train dataset: {cfg.dataset.name} ({cfg.dataset.stage})")
     limit = OmegaConf.select(val_dataset_cfg, "limit_scenes", default=None)
-    print(f"Val dataset created (re10k/test{f', first {limit} scenes' if limit else ''})")
+    print(f"Val dataset: {cfg.dataset.name} (stage overridden to test{f', first {limit} scenes' if limit else ''})")
     
     # Create model
     print("\nCreating model...")
