@@ -138,8 +138,8 @@ class MVSplat(nn.Module):
         target_intrinsics = batch["target"]["intrinsics"]
         target_extrinsics = batch["target"]["extrinsics"]
 
-        near_plane = self.cfg.near
-        far_plane = self.cfg.far
+        near_plane = self.cfg.near / batch["scale"]
+        far_plane = self.cfg.far / batch["scale"]
 
         B, K, C, H, W = context_images.shape
         num_target_views = target_extrinsics.shape[1]
@@ -163,20 +163,27 @@ class MVSplat(nn.Module):
             proj_matrices = make_proj_matrix(context_extrinsics, context_intrinsics)
         proj_matrices = proj_matrices.to(self.cfg.pipeline_dtype)
 
-        # 2. Cost volume
+        n = near_plane.min() if isinstance(near_plane, torch.Tensor) else near_plane
+        f = far_plane.max() if isinstance(far_plane, torch.Tensor) else far_plane
+        n_scalar = n.item() if isinstance(n, torch.Tensor) else float(n)
+        f_scalar = f.item() if isinstance(f, torch.Tensor) else float(f)
+
+        # 2. Cost volume (needs scalar near/far for depth plane generation)
         cost_volume = self.cost_volume_constructor(
             features=features,
             Ps=proj_matrices,
+            near=n_scalar,
+            far=f_scalar,
         )
 
-        # 3. Depth estimation
+        # 3. Depth estimation (needs scalar near/far for inv_depth linspace)
         depth_maps, depth_conf = self.depth_estimator(
             cost_volume=cost_volume,
             images=context_images,
             features=features,
+            near=n_scalar,
+            far=f_scalar,
         )
-        n = near_plane.min() if isinstance(near_plane, torch.Tensor) else near_plane
-        f = far_plane.max() if isinstance(far_plane, torch.Tensor) else far_plane
         depth_maps = torch.clamp(depth_maps, min=n+1e-4, max=f-1e-4)
 
         # 4. Gaussians (head calls adapter internally)

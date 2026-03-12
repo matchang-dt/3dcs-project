@@ -58,7 +58,7 @@ class DepthEstimator(L.LightningModule):
         nn.init.constant_(self.gn.bias, 0)
         self.refiner = DepthRefiner(channels, feat_map_size, dtype)
     
-    def forward(self, cost_volume, images, features):
+    def forward(self, cost_volume, images, features, near=None, far=None):
         """
         Forward pass of the DepthEstimator.
         Args:
@@ -78,7 +78,11 @@ class DepthEstimator(L.LightningModule):
         features = self.silu(features) # [B*K, 128, H//2, W//2]
         features = F.interpolate(features, size=(H, W), mode='bilinear', align_corners=False) # [B*K, 128, H, W]
         features = self.conv2(features) # [B*K, 128, H, W]
-        inv_depth_map, depth_conf = inv_depth_estimate(cost_volume, self.near, self.far) # [B, K, H, W], [B, K, H, W]
+
+        near = near if near is not None else self.near
+        far = far if far is not None else self.far
+
+        inv_depth_map, depth_conf = inv_depth_estimate(cost_volume, near, far) # [B, K, H, W], [B, K, H, W]
         inv_depth_map_usq = inv_depth_map.reshape(-1, H, W).unsqueeze(1) # [B*K, 1, H, W]
         depth_conf_usq = depth_conf.reshape(-1, H, W).unsqueeze(1) # [B*K, 1, H, W]
         refine_inputs = torch.cat([images, features, inv_depth_map_usq, depth_conf_usq], dim=1) # [B*K, 128+5, H, W]
@@ -90,6 +94,6 @@ class DepthEstimator(L.LightningModule):
         # print("inv_depth_residual min, max: ", inv_depth_residual.min(), inv_depth_residual.max())
         # print("inv_depth_residual mean, std: ", inv_depth_residual.mean(), inv_depth_residual.std())
         inv_depth_map += inv_depth_residual # [B, K, H, W]
-        inv_depth_map = inv_depth_map.clamp(max=1/self.near, min=1/self.far)
+        inv_depth_map = inv_depth_map.clamp(max=1/near, min=1/far)
         depth_map = 1 / inv_depth_map # [B, K, H, W]
         return depth_map, depth_conf # [B, K, H, W], [B, K, H, W]

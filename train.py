@@ -150,6 +150,7 @@ def collate_fn(batch):
         'scene_key': [item['scene_key'] for item in batch],
         'near_plane': batch[0].get('near_plane', 0.1),
         'far_plane': batch[0].get('far_plane', 100.0),
+        'scale': batch[0].get('scale', 1.0),
     }
 
 

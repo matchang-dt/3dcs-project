@@ -8,7 +8,7 @@ import lightning as L
 from .refiner import CostVolumeRefiner
 
 
-def generate_volume_grids(h, w, near, far, depth_steps=128):
+def generate_volume_grids(h, w, near, far, depth_steps=128, device='cuda'):
     """
     Generate the volume grids for the cost volume construction.
     Args:
@@ -19,14 +19,14 @@ def generate_volume_grids(h, w, near, far, depth_steps=128):
     Returns:
         volume_grids (torch.Tensor): output tensor of shape [h, w, d, 4]
     """
-    u_grids = torch.arange(h, dtype=torch.float32).reshape(h, 1, 1).expand(h, w, 1)
+    u_grids = torch.arange(h, dtype=torch.float32, device=device).reshape(h, 1, 1).expand(h, w, 1)
     u_grids = (2*u_grids + 1) / h - 1 # [-1, 1]
-    v_grids = torch.arange(w, dtype=torch.float32).reshape(1, w, 1).expand(h, w, 1)
+    v_grids = torch.arange(w, dtype=torch.float32, device=device).reshape(1, w, 1).expand(h, w, 1)
     v_grids = (2*v_grids + 1) / w - 1 # [-1, 1]
     uv_grids = torch.stack(
         [u_grids, v_grids, torch.ones_like(u_grids, dtype=torch.float32)], dim=-1
     ).expand(h, w, depth_steps, 3) # [h, w, 128, 3]
-    inv_depths = torch.linspace(1/far, 1/near, depth_steps, dtype=torch.float32)
+    inv_depths = torch.linspace(1/far, 1/near, depth_steps, dtype=torch.float32, device=device)
     inv_depths = inv_depths.reshape(1, 1, depth_steps, 1).expand(h, w, depth_steps, 1) #[h, w, 128, 1]
     volume_grids = torch.cat([uv_grids, inv_depths], dim=-1) # [h, w, 128, 4]
     return volume_grids # volume_grids[i, j, k] = [u, v, 1, 1/z]
@@ -104,10 +104,10 @@ class CostVolumeConstructor(L.LightningModule):
         nn.init.constant_(self.gn.bias, 0)
         # self.last_conv = nn.Conv2d(feature_dim, feature_dim, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
         
-        volume_grids = generate_volume_grids(h, w, near, far,depth_steps=feature_dim)
+        volume_grids = generate_volume_grids(h, w, near, far, depth_steps=feature_dim)
         self.register_buffer('volume_grids', volume_grids)
 
-    def forward(self, features, Ps):
+    def forward(self, features, Ps, near=None, far=None):
         # features.shape  [B, K, H//4, W//4, 128]
         # Ps.shape [B, K, 4, 4]
         f_srcs = []
@@ -133,12 +133,22 @@ class CostVolumeConstructor(L.LightningModule):
         f_tgts = torch.stack(f_tgts, dim=0).reshape(b, k, k - 1, h, w, self.feature_dim)
         P_srcs = torch.stack(P_srcs, dim=0).reshape(b, k, 4, 4)
         P_tgts = torch.stack(P_tgts, dim=0).reshape(b, k, k - 1, 4, 4)
+
+        # build cost volume
+        volume_grids = generate_volume_grids(
+            h, w,
+            near if near is not None else self.near,
+            far if far is not None else self.far, 
+            depth_steps=self.feature_dim,
+            device=P_srcs.device,
+        )
+
         cost_volumes = cost_volume_construct(
             P_srcs, 
             P_tgts, 
             f_srcs, 
             f_tgts, 
-            self.volume_grids, 
+            volume_grids, 
         ) # [B, K, H//4, W//4, 128]
         # assert torch.isfinite(cost_volumes).all(), "cost_volumes is not finite"
         refine_input = torch.cat([cost_volumes, features], dim=-1) # [B, K, H//4, W//4, 256]

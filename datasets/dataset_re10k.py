@@ -282,6 +282,8 @@ class Re10kDataset(IterableDataset):
                         # scale planes accordingly as well
                         near_plane /= scale
                         far_plane /= scale
+                    else:
+                        scale = 1.0
                     
                     # Return as a batch-ready dict
                     batch = {
@@ -298,7 +300,9 @@ class Re10kDataset(IterableDataset):
                         'scene_key': scene_dict.get('key', 'unknown'),
                         'near_plane': near_plane,
                         'far_plane': far_plane,
+                        'scale': scale
                     }
+
                     yield batch
                     
             except Exception as e:
