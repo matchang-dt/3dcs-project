@@ -41,6 +41,7 @@ class Re10kDatasetCfg:
     view_sampler: ViewSampler = None
     normalize_scene: bool = False
     make_baseline_1: bool = False
+    limit_scenes: Optional[int] = None  # if set, only yield this many scenes (e.g. for validation)
 
 class Re10kDataset(IterableDataset):    
     def __init__(
@@ -240,12 +241,19 @@ class Re10kDataset(IterableDataset):
             worker_id = worker_info.id
             shard_files = [f for i, f in enumerate(self.shard_files) if i % num_workers == worker_id]
         
+        limit_scenes = getattr(self.cfg, "limit_scenes", None)
+        scenes_yielded = 0
+
         for shard_file in shard_files:
+            if limit_scenes is not None and scenes_yielded >= limit_scenes:
+                break
             try:
                 # Load shard (list of scene dicts)
                 scenes = torch.load(shard_file)
                 
                 for scene_dict in scenes:
+                    if limit_scenes is not None and scenes_yielded >= limit_scenes:
+                        break
                     # Load full scene as ViewSet
                     all_views = self.load_scene(scene_dict)
 
@@ -304,6 +312,7 @@ class Re10kDataset(IterableDataset):
                     }
 
                     yield batch
+                    scenes_yielded += 1
                     
             except Exception as e:
                 print(f"Error loading shard {shard_file}: {e}")

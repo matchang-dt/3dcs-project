@@ -53,6 +53,10 @@ class MVSplatConfig:
     decoder_cfg: Optional[DecoderGaussianSplattingCUDACfg] = None
     dataset_cfg: Optional[DatasetCfg] = None
 
+    # Depth map params
+    depth_map_vmin: float = 0.0
+    depth_map_vmax: float = 1.0
+
 class MVSplat(nn.Module):
     """
     MVSplat: Multi-View Splat model for novel view synthesis.
