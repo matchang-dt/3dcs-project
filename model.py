@@ -53,6 +53,11 @@ class MVSplatConfig:
     decoder_cfg: Optional[DecoderGaussianSplattingCUDACfg] = None
     dataset_cfg: Optional[DatasetCfg] = None
 
+    # Visualization params (used by wrapper logging)
+    # Quantile range for inverse depth normalization in visualizations.
+    depth_map_vmin: float = 0.02
+    depth_map_vmax: float = 0.98
+
 class MVSplat(nn.Module):
     """
     MVSplat: Multi-View Splat model for novel view synthesis.
