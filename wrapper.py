@@ -109,6 +109,11 @@ class MVSplatWrapper(L.LightningModule):
         self.lpips = LPIPS(net='vgg')
         for p in self.lpips.parameters(): # freeze LPIPS
             p.requires_grad = False
+
+    def load_state_dict(self, state_dict: dict, strict: bool = True, assign: bool = False):
+        """Remap splat_head -> gaussian_head so checkpoints saved with either naming load when resuming."""
+        remapped = {k.replace("splat_head", "gaussian_head"): v for k, v in state_dict.items()}
+        return super().load_state_dict(remapped, strict=strict, assign=assign)
         
     def forward(self, batch: Dict[str, Any], render_depth: bool = False) -> Dict[str, torch.Tensor]:
         """

@@ -240,12 +240,21 @@ def main(cfg: DictConfig):
         deterministic=False,
     )
     
-    # Train
-    print("\nStarting training...")
+    # Train (resume from checkpoint if configured)
+    ckpt_path = OmegaConf.select(cfg, "resume_from_checkpoint", default=None)
+    if ckpt_path is not None:
+        ckpt_path = str(ckpt_path).strip() or None
+    if ckpt_path:
+        ckpt_path = os.path.expanduser(ckpt_path)
+        if not os.path.isfile(ckpt_path):
+            raise FileNotFoundError(f"Checkpoint file not found: {ckpt_path}")
+        print(f"Resuming from checkpoint: {ckpt_path}")
+    else:
+        print("\nStarting training from scratch.")
     print(f"Logs will be saved to: {logger.log_dir}")
     print(f"Checkpoints will be saved to: {cfg.checkpoint.dirpath}")
 
-    trainer.fit(model, train_loader, val_dataloaders=val_loader)
+    trainer.fit(model, train_loader, val_dataloaders=val_loader, ckpt_path=ckpt_path, weights_only=False)
 
     print("\nTraining complete!")
 

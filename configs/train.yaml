@@ -52,6 +52,8 @@ checkpoint:
   filename: mvsplat-{epoch:02d}-{step:06d}
   save_every_n_train_steps: 10000
 
+resume_from_checkpoint: null
+
 # Mixed precision
 # precision: 16-mixed  # or '32' or 'bf16-mixed'
 precision: 32-true  # or '32' or 'bf16-mixed'
