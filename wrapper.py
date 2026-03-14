@@ -57,6 +57,7 @@ class LightningConfig:
     
     # Logging
     log_images_every_n_steps: int = 200
+    val_log_first_n_images: int = 5
     val_check_interval: int = 5000
 
 
@@ -222,9 +223,9 @@ class MVSplatWrapper(L.LightningModule):
         # self.log("train/depth_map_vmax", vmax, on_step=True, on_epoch=False)
         # self.log("train/depth_map_vmin", vmin, on_step=True, on_epoch=False)
 
-        # periodically log images during training
+        # periodically log images during training (under train/*)
         if self.global_step % self.lightning_config.log_images_every_n_steps == 0:
-            self.log_images(batch, outputs)
+            self.log_images(batch, outputs, key_prefix="train")
 
         return losses['loss']
     
@@ -259,16 +260,16 @@ class MVSplatWrapper(L.LightningModule):
                 on_epoch=True,
             )
         
-        # periodically log images
-        if self.global_step % self.lightning_config.log_images_every_n_steps == 0:
-            self.log_images(batch, outputs)
-        
+        if batch_idx < self.lightning_config.val_log_first_n_images:
+            self.log_images(batch, outputs, key_prefix="val")
+
         return losses['loss']
     
-    def log_images(self, batch: Dict[str, Any], outputs: Dict[str, torch.Tensor]):
+    def log_images(self, batch: Dict[str, Any], outputs: Dict[str, torch.Tensor], key_prefix: str = "val"):
         """
         Log images for the first batch: stitched grids of renders, targets, and context (input) images.
         Depth and diff grids use jet colormap (blue=low, red=high). All images are [3, H, W].
+        key_prefix: 'train' or 'val' so training and validation images are logged under different keys.
         """
         if self.logger is None:
             return
@@ -366,50 +367,44 @@ class MVSplatWrapper(L.LightningModule):
             diff_stack = torch.stack(diff_list, dim=0)  # [V, 3, H, W]
             diff_grid = make_grid(diff_stack, nrow=nrow, padding=4, normalize=False)
 
-            # Log stitched grids
+            # Log stitched grids (key_prefix is 'train' or 'val')
             step = self.global_step
             if isinstance(self.logger, WandbLogger):
                 self.logger.log_image(
-                    key="val/rendered_grid",
+                    key=f"{key_prefix}/rendered_grid",
                     images=[rendered_grid.cpu().permute(1, 2, 0).numpy()],
                     caption=["rendered (all target views)"],
                 )
                 self.logger.log_image(
-                    key="val/target_grid",
+                    key=f"{key_prefix}/target_grid",
                     images=[target_grid.cpu().permute(1, 2, 0).numpy()],
                     caption=["target (all target views)"],
                 )
                 self.logger.log_image(
-                    key="val/context_grid",
+                    key=f"{key_prefix}/context_grid",
                     images=[context_grid.cpu().permute(1, 2, 0).numpy()],
                     caption=["context (input views)"],
                 )
                 self.logger.log_image(
-                    key="val/diff_grid",
+                    key=f"{key_prefix}/diff_grid",
                     images=[diff_grid.cpu().permute(1, 2, 0).numpy()],
                     caption=["|rendered - target| (jet)"],
                 )
-                # if depth_grid is not None:
-                #     self.logger.log_image(
-                #         key="val/depth_grid",
-                #         images=[depth_grid.cpu().permute(1, 2, 0).numpy()],
-                #         caption=["rendered depth (jet)"],
-                #     )
                 if context_depth_grid is not None:
                     self.logger.log_image(
-                        key="val/context_depth_grid",
+                        key=f"{key_prefix}/context_depth_grid",
                         images=[context_depth_grid.cpu().permute(1, 2, 0).numpy()],
                         caption=["context depth maps (jet)"],
                     )
             elif hasattr(self.logger.experiment, "add_image"):
-                self.logger.experiment.add_image("val/rendered_grid", rendered_grid, step)
-                self.logger.experiment.add_image("val/target_grid", target_grid, step)
-                self.logger.experiment.add_image("val/context_grid", context_grid, step)
-                self.logger.experiment.add_image("val/diff_grid", diff_grid, step)
+                self.logger.experiment.add_image(f"{key_prefix}/rendered_grid", rendered_grid, step)
+                self.logger.experiment.add_image(f"{key_prefix}/target_grid", target_grid, step)
+                self.logger.experiment.add_image(f"{key_prefix}/context_grid", context_grid, step)
+                self.logger.experiment.add_image(f"{key_prefix}/diff_grid", diff_grid, step)
                 if depth_grid is not None:
-                    self.logger.experiment.add_image("val/depth_grid", depth_grid, step)
+                    self.logger.experiment.add_image(f"{key_prefix}/depth_grid", depth_grid, step)
                 if context_depth_grid is not None:
-                    self.logger.experiment.add_image("val/context_depth_grid", context_depth_grid, step)
+                    self.logger.experiment.add_image(f"{key_prefix}/context_depth_grid", context_depth_grid, step)
         except Exception as e:
             print(f"Warning: Error logging images: {e}")
     

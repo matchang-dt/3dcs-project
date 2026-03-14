@@ -173,6 +173,12 @@ def main(cfg: DictConfig):
     print("\nCreating datasets...")
     print(f"Dataset: {cfg.dataset.name} (data_root={cfg.dataset.data_root})")
     train_dataset = DATASETS[cfg.dataset.name](cfg=cfg.dataset)
+    # Validation/test dataset: same dataset class, config merged with val_dataset overrides (e.g. stage: test)
+    val_dataset_cfg = OmegaConf.merge(
+        OmegaConf.create(OmegaConf.to_container(cfg.dataset, resolve=True)),
+        OmegaConf.create(OmegaConf.to_container(cfg.get("val_dataset", {}), resolve=True)),
+    )
+    val_dataset = DATASETS[cfg.dataset.name](cfg=val_dataset_cfg)
     
     # Create dataloaders
     train_loader = DataLoader(
@@ -182,8 +188,16 @@ def main(cfg: DictConfig):
         collate_fn=collate_fn,
         pin_memory=True,
     )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=cfg.batch_size,
+        num_workers=0,
+        collate_fn=collate_fn,
+        pin_memory=True,
+    )
     
-    print(f"Train dataset created")
+    print(f"Train dataset: {cfg.dataset.name} (stage={cfg.dataset.get('stage', 'train')})")
+    print(f"Val dataset: {cfg.dataset.name} (stage={val_dataset_cfg.get('stage', 'test')})")
     
     # Create model
     print("\nCreating model...")
@@ -211,6 +225,7 @@ def main(cfg: DictConfig):
     )
     
     # Create trainer
+    limit_val_batches = cfg.get("limit_val_batches", None)
     trainer = L.Trainer(
         max_steps=cfg.max_steps,
         accelerator='auto',
@@ -220,18 +235,19 @@ def main(cfg: DictConfig):
         logger=logger,
         log_every_n_steps=cfg.log_every_n_steps,
         val_check_interval=cfg.val_check_interval,
+        limit_val_batches=limit_val_batches,
         gradient_clip_val=cfg.gradient_clip_val,
         deterministic=False,
     )
     
-    # Train
+    # Train (validation uses RE10K test set via val_dataset.stage: test)
     print("\nStarting training...")
     print(f"Logs will be saved to: {logger.log_dir}")
     print(f"Checkpoints will be saved to: {cfg.checkpoint.dirpath}")
 
     if cfg.resume_from_checkpoint:
         print(f"Resuming from checkpoint: {cfg.resume_from_checkpoint}")
-    trainer.fit(model, train_loader, ckpt_path=cfg.resume_from_checkpoint, weights_only=False)
+    trainer.fit(model, train_loader, val_dataloaders=val_loader, ckpt_path=cfg.resume_from_checkpoint, weights_only=False)
 
     print("\nTraining complete!")
 

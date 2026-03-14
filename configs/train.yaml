@@ -20,10 +20,16 @@ batch_size: 6
 num_workers: 4
 max_steps: 300000
 val_check_interval: 5000
+limit_val_batches: 20  # max validation batches per run (IterableDataset has no fixed length)
 log_every_n_steps: 10
 log_images_every_n_steps: 100
+val_log_first_n_images: 5
 gradient_clip_val: 1.0
 num_gpus: 1  # adjust this in command line
+
+# Validation dataset: overrides merged with main dataset config (e.g. stage: test for RE10K test set)
+val_dataset:
+  stage: test
 
 # Loss configuration
 loss:
