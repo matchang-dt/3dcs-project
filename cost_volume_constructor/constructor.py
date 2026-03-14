@@ -146,10 +146,11 @@ class CostVolumeConstructor(L.LightningModule):
         # assert torch.isfinite(cost_volumes).all(), "cost_volumes is not finite"
         refine_input = torch.cat([cost_volumes, features], dim=-1) # [B, K, H//4, W//4, 256]
         cost_volumes = self.refiner(refine_input).flatten(0,1).permute(0,3,1,2) # [B, K, H//4, W//4, 128]
-        cost_volumes_residuals = self.resid_conv(cost_volumes).permute(0, 2, 3, 1) # [B, K, H, W, 128]
-        cost_volumes_residuals = cost_volumes_residuals.reshape(b, k, self.feature_dim, h, w) # [B, K, H, W, 128]
+        cost_volumes_residuals = self.resid_conv(cost_volumes) # [B, K, H, W, 128]
+        # cost_volumes_residuals = cost_volumes_residuals.reshape(b, k, self.feature_dim, h, w) # [B, K, H, W, 128]
         # assert torch.isfinite(cost_volume_residuals).all(), "cost_volume_residuals is not finite"
         cost_volumes = cost_volumes + cost_volumes_residuals # [B, K, H//4, W//4, 128]
+        cost_volumes = cost_volumes.reshape(b, k, self.feature_dim, h, w) # [B, K, H, W, 128]
         # assert torch.isfinite(cost_volumes).all(), "cost_volumes is not finite"
         # upsample the cost volume to the original image size (maybe delay upsample until after depth?)
         # cost_volumes = cost_volumes.permute(0, 1, 4, 2, 3).reshape(b * k, self.feature_dim, h, w) # [B * K, 128, H//4, W//4]

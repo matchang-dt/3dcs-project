@@ -237,7 +237,7 @@ class MVSplat(nn.Module):
 
         with torch.autocast(device_type='cuda', enabled=False):
             proj_matrices = make_proj_matrix(context_extrinsics, context_intrinsics)
-        proj_matrices = proj_matrices.to(self.cfg.pipeline_dtype)
+        proj_matrices = proj_matrices.to(self.cfg.pipeline_dtype) # [B, V, 4, 4] homogenous proj
 
         # near and far planes should be constant
         n = near_plane.min() if isinstance(near_plane, torch.Tensor) else near_plane

@@ -65,23 +65,26 @@ class DepthEstimator(L.LightningModule):
             depth_map (torch.Tensor): output tensor of shape [B, K, H, W]
             depth_conf (torch.Tensor): output tensor of shape [B, K, H, W], the max probability of the depth candidate for each pixel
         """
-        b, k, H, W, d = cost_volume.shape # h=H//4, w=W//4
-        images = images.reshape(-1, 3, H * 4, W * 4) # [B*K, 3, H, W]
-        cost_volume = self.small_depth_head(cost_volume.reshape(b*k, H, W, d).permute(0,3,1,2)) # [B, K, H, W, 128]
-        cost_volume = cost_volume.permute(0, 2, 3, 1).reshape(b, k, H, W, d) # [B, K, H, W, 128]
-        # cost volume here should be downsampled still
-        inv_depth_map, depth_conf = inv_depth_estimate(cost_volume, self.near, self.far) # [B, K, H, W], [B, K, H, W]
-        # upsample
-        inv_depth_map = F.interpolate(inv_depth_map, size=(H*4, W*4), mode='bilinear', align_corners=False)
-        depth_conf = F.interpolate(depth_conf, size=(H*4, W*4), mode='bilinear', align_corners=False)
+        b, k, h, w, d = cost_volume.shape # h=H//4, w=W//4
+        H, W = h * 4, w * 4  # original image shape
+        images = images.reshape(-1, 3, H, W) # => [B*K, 3, H, W]
 
-        inv_depth_map_usq = inv_depth_map.reshape(-1, H * 4, W * 4).unsqueeze(1) # [B*K, 1, H, W]
-        depth_conf_usq = depth_conf.reshape(-1, H * 4, W * 4).unsqueeze(1) # [B*K, 1, H, W]
+        cost_volume = self.small_depth_head(cost_volume.reshape(b*k, h, w, d).permute(0,3,1,2)) # [B, K, H, W, 128]
+        cost_volume = cost_volume.permute(0, 2, 3, 1).reshape(b, k, h, w, d) # [B, K, H, W, 128]
+        inv_depth_map, depth_conf = inv_depth_estimate(cost_volume, self.near, self.far) # [B, K, H, W], [B, K, H, W]
+        
+        # upsample maps and conf to image resolution
+        inv_depth_map = F.interpolate(inv_depth_map, size=(H, W), mode='bilinear', align_corners=False)
+        depth_conf = F.interpolate(depth_conf, size=(H, W), mode='bilinear', align_corners=False)
+
+        inv_depth_map_usq = inv_depth_map.reshape(b*k, 1, H, W) # [B*K, 1, H, W]
+        depth_conf_usq = depth_conf.reshape(b*k, 1, H, W) # [B*K, 1, H, W]
 
         # (features are already upsampled outside, or they should be)
         refine_inputs = torch.cat([images, features, inv_depth_map_usq, depth_conf_usq], dim=1) # [B*K, 128+5, H, W]
-        refine_inputs = refine_inputs.permute(0, 2, 3, 1).reshape(b, k, H*4, W*4, d+5) # [B*K, H, W, 128+5]
+        refine_inputs = refine_inputs.permute(0, 2, 3, 1).reshape(b, k, H, W, d+5) # [B*K, H, W, 128+5]
         inv_depth_residual = self.refiner(refine_inputs) # [B, K, H, W]
+ 
         # print("================================================")
         # print("inv_depth_map min, max: ", inv_depth_map.min(), inv_depth_map.max())
         # print("inv_depth_map mean, std: ", inv_depth_map.mean(), inv_depth_map.std())
