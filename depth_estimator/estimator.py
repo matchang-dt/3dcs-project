@@ -47,16 +47,12 @@ class DepthEstimator(L.LightningModule):
         self.to(dtype)
         self.near = near
         self.far = far
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=True, dtype=dtype)
-        self.gn = nn.GroupNorm(num_groups=num_groups, num_channels=channels, eps=1e-6, dtype=dtype)
-        self.silu = nn.SiLU(inplace=True)
-        nn.init.kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.xavier_normal_(self.conv2.weight)
-        nn.init.constant_(self.conv2.bias, 0)
-        nn.init.constant_(self.gn.weight, 1)
-        nn.init.constant_(self.gn.bias, 0)
         self.refiner = DepthRefiner(channels, feat_map_size, dtype)
+        self.small_depth_head = nn.Sequential(
+            nn.Conv2d(channels, channels * 2, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype),
+            nn.GELU(),
+            nn.Conv2d(channels * 2, channels, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype),
+        ) # for raw cost volume
     
     def forward(self, cost_volume, images, features):
         """
@@ -64,25 +60,27 @@ class DepthEstimator(L.LightningModule):
         Args:
             cost_volume (torch.Tensor): input tensor of shape [B, K, H, W, D=128]
             images (torch.Tensor): input tensor of shape [B, K, 3, H, W]
-            features (torch.Tensor): input tensor of shape [B, K, H//4, W//4, 128] features extracted from the extractor
+            features (torch.Tensor): input tensor of shape [B, K, H, W, 128] features extracted from the extractor
         Returns:
             depth_map (torch.Tensor): output tensor of shape [B, K, H, W]
             depth_conf (torch.Tensor): output tensor of shape [B, K, H, W], the max probability of the depth candidate for each pixel
         """
         b, k, H, W, d = cost_volume.shape # h=H//4, w=W//4
-        images = images.reshape(-1, 3, H, W) # [B*K, 3, H, W]
-        features = features.reshape(-1, H//4, W//4, d).permute(0, 3, 1, 2) # [B*K, 128, H//4, W//4]
-        features = F.interpolate(features, size=(H//2, W//2), mode='bilinear', align_corners=False) # [B*K, 128, H, W]
-        features = self.conv1(features) # [B*K, 128, H//2, W//2]
-        features = self.gn(features) # [B*K, 128, H//2, W//2]
-        features = self.silu(features) # [B*K, 128, H//2, W//2]
-        features = F.interpolate(features, size=(H, W), mode='bilinear', align_corners=False) # [B*K, 128, H, W]
-        features = self.conv2(features) # [B*K, 128, H, W]
+        images = images.reshape(-1, 3, H * 4, W * 4) # [B*K, 3, H, W]
+        cost_volume = self.small_depth_head(cost_volume.reshape(b*k, H, W, d).permute(0,3,1,2)) # [B, K, H, W, 128]
+        cost_volume = cost_volume.permute(0, 2, 3, 1).reshape(b, k, H, W, d) # [B, K, H, W, 128]
+        # cost volume here should be downsampled still
         inv_depth_map, depth_conf = inv_depth_estimate(cost_volume, self.near, self.far) # [B, K, H, W], [B, K, H, W]
-        inv_depth_map_usq = inv_depth_map.reshape(-1, H, W).unsqueeze(1) # [B*K, 1, H, W]
-        depth_conf_usq = depth_conf.reshape(-1, H, W).unsqueeze(1) # [B*K, 1, H, W]
+        # upsample
+        inv_depth_map = F.interpolate(inv_depth_map, size=(H*4, W*4), mode='bilinear', align_corners=False)
+        depth_conf = F.interpolate(depth_conf, size=(H*4, W*4), mode='bilinear', align_corners=False)
+
+        inv_depth_map_usq = inv_depth_map.reshape(-1, H * 4, W * 4).unsqueeze(1) # [B*K, 1, H, W]
+        depth_conf_usq = depth_conf.reshape(-1, H * 4, W * 4).unsqueeze(1) # [B*K, 1, H, W]
+
+        # (features are already upsampled outside, or they should be)
         refine_inputs = torch.cat([images, features, inv_depth_map_usq, depth_conf_usq], dim=1) # [B*K, 128+5, H, W]
-        refine_inputs = refine_inputs.permute(0, 2, 3, 1).reshape(b, k, H, W, d+5) # [B*K, H, W, 128+5]
+        refine_inputs = refine_inputs.permute(0, 2, 3, 1).reshape(b, k, H*4, W*4, d+5) # [B*K, H, W, 128+5]
         inv_depth_residual = self.refiner(refine_inputs) # [B, K, H, W]
         # print("================================================")
         # print("inv_depth_map min, max: ", inv_depth_map.min(), inv_depth_map.max())

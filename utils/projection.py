@@ -124,6 +124,6 @@ def make_proj_matrix(extrinsics, intrinsics):
     # extrinsics (w2c): [B, V, 4, 4], intrinsics: [B, V, 3, 3]
     B, V = extrinsics.shape[:2]
     K = torch.zeros((B, V, 4, 4), device=extrinsics.device, dtype=extrinsics.dtype)
-    K[:, :, :3, :3] = intrinsics
+    K[:, :, :3, :3] = intrinsics  # normalized intrinsics!
     K[:, :, 3, 3] = 1.0
     return K @ extrinsics

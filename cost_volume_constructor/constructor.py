@@ -19,10 +19,11 @@ def generate_volume_grids(h, w, near, far, depth_steps=128):
     Returns:
         volume_grids (torch.Tensor): output tensor of shape [h, w, d, 4]
     """
-    u_grids = torch.arange(h, dtype=torch.float32).reshape(h, 1, 1).expand(h, w, 1)
-    u_grids = (2*u_grids + 1) / h - 1 # [-1, 1]
-    v_grids = torch.arange(w, dtype=torch.float32).reshape(1, w, 1).expand(h, w, 1)
-    v_grids = (2*v_grids + 1) / w - 1 # [-1, 1]
+    u_grids = (torch.arange(h, dtype=torch.float32) + 0.5) / h
+    u_grids = u_grids.reshape(h, 1, 1).expand(h, w, 1)
+    v_grids = (torch.arange(w, dtype=torch.float32) + 0.5) / w
+    v_grids = v_grids.reshape(1, w, 1).expand(h, w, 1)
+
     uv_grids = torch.stack(
         [u_grids, v_grids, torch.ones_like(u_grids, dtype=torch.float32)], dim=-1
     ).expand(h, w, depth_steps, 3) # [h, w, 128, 3]
@@ -55,6 +56,7 @@ def cost_volume_construct(P_src, P_tgt, f_src, f_tgt, volume_grids):
     valid_mask = warped_w > 1e-4
     safe_w = torch.where(valid_mask, warped_w, torch.ones_like(warped_w))
     warped_uv = warped[..., :2] / safe_w # [B, K, K - 1, h, w, d, 2]
+    warped_uv = (warped_uv - 0.5) * 2.0  # convert uv from [0,1] to [-1,1] for grid_sample
     warped_uv = torch.where(valid_mask.expand_as(warped_uv), warped_uv, torch.full_like(warped_uv, 2.0))
     warped_uv = warped_uv.permute(0, 1, 2, 5, 3, 4, 6).reshape(b*k*(k-1)*d, h, w, 2) # [B*K*(K-1)*d, h, w, 2]
     warped_uv = warped_uv.clamp(min=-2.0, max=2.0)
@@ -69,7 +71,7 @@ def cost_volume_construct(P_src, P_tgt, f_src, f_tgt, volume_grids):
     f_src_reshaped = f_src.permute(0, 1, 4, 2, 3) # [B, K, c, h, w]
     f_tgt_reshaped = f_tgt.unsqueeze(-2).expand(b, k, k-1, h, w, d, c) # [B, K, K-1, h, w, d, c]
     f_tgt_reshaped = f_tgt_reshaped.permute(0, 1, 2, 5, 6, 3, 4).reshape(b*k*(k-1)*d, c, h, w) # [B*K*(K-1)*d, c, h, w]
-    warped_features = F.grid_sample(f_tgt_reshaped, warped_uv, mode='bilinear', padding_mode='zeros') # [B*K*(K-1)*d, c, h, w]
+    warped_features = F.grid_sample(f_tgt_reshaped, warped_uv, mode='bilinear', padding_mode='zeros', align_corners=False) # [B*K*(K-1)*d, c, h, w]
     warped_features = warped_features.reshape(b, k, k-1, d, c, h, w) # [B, K, K-1, d, c, h, w]
     cost_volume = torch.einsum('bkchw,bkldchw->bkdhw', f_src_reshaped, warped_features) # [B, K, d, h, w]
     cost_volume = cost_volume.permute(0, 1, 3, 4, 2) / sqrt(c) # [B, K, h, w, d]
@@ -103,6 +105,7 @@ class CostVolumeConstructor(L.LightningModule):
         nn.init.constant_(self.gn.weight, 1)
         nn.init.constant_(self.gn.bias, 0)
         # self.last_conv = nn.Conv2d(feature_dim, feature_dim, kernel_size=3, stride=1, padding=1, bias=False, dtype=dtype)
+        self.resid_conv = nn.Conv2d(feature_dim, feature_dim, kernel_size=1, stride=1, padding=0, bias=False, dtype=dtype)
         
         volume_grids = generate_volume_grids(h, w, near, far,depth_steps=feature_dim)
         self.register_buffer('volume_grids', volume_grids)
@@ -142,18 +145,20 @@ class CostVolumeConstructor(L.LightningModule):
         ) # [B, K, H//4, W//4, 128]
         # assert torch.isfinite(cost_volumes).all(), "cost_volumes is not finite"
         refine_input = torch.cat([cost_volumes, features], dim=-1) # [B, K, H//4, W//4, 256]
-        cost_volume_residuals = self.refiner(refine_input) # [B, K, H//4, W//4, 128]
+        cost_volumes = self.refiner(refine_input).flatten(0,1).permute(0,3,1,2) # [B, K, H//4, W//4, 128]
+        cost_volumes_residuals = self.resid_conv(cost_volumes).permute(0, 2, 3, 1) # [B, K, H, W, 128]
+        cost_volumes_residuals = cost_volumes_residuals.reshape(b, k, self.feature_dim, h, w) # [B, K, H, W, 128]
         # assert torch.isfinite(cost_volume_residuals).all(), "cost_volume_residuals is not finite"
-        cost_volumes = cost_volumes + cost_volume_residuals # [B, K, H//4, W//4, 128]
+        cost_volumes = cost_volumes + cost_volumes_residuals # [B, K, H//4, W//4, 128]
         # assert torch.isfinite(cost_volumes).all(), "cost_volumes is not finite"
-        # upsample the cost volume to the original image size
-        cost_volumes = cost_volumes.permute(0, 1, 4, 2, 3).reshape(b * k, self.feature_dim, h, w) # [B * K, 128, H//4, W//4]
-        cost_volumes = F.interpolate(cost_volumes, size=(h*2, w*2), mode='bilinear', align_corners=False)
-        cost_volumes = self.out_conv1(cost_volumes) # [B * K, 128, H//2, W//2]
-        cost_volumes = self.gn(cost_volumes) # [B * K, 128, H//2, W//2]
-        cost_volumes = self.silu(cost_volumes) # [B * K, 128, H//2, W//2]
-        cost_volumes = F.interpolate(cost_volumes, size=(h*4, w*4), mode='bilinear', align_corners=False)
-        cost_volumes = self.out_conv2(cost_volumes) # [B * K, 128, H, W]
+        # upsample the cost volume to the original image size (maybe delay upsample until after depth?)
+        # cost_volumes = cost_volumes.permute(0, 1, 4, 2, 3).reshape(b * k, self.feature_dim, h, w) # [B * K, 128, H//4, W//4]
+        # cost_volumes = F.interpolate(cost_volumes, size=(h*2, w*2), mode='bilinear', align_corners=False)
+        # cost_volumes = self.out_conv1(cost_volumes) # [B * K, 128, H//2, W//2]
+        # cost_volumes = self.gn(cost_volumes) # [B * K, 128, H//2, W//2]
+        # cost_volumes = self.silu(cost_volumes) # [B * K, 128, H//2, W//2]
+        # cost_volumes = F.interpolate(cost_volumes, size=(h*4, w*4), mode='bilinear', align_corners=False)
+        # cost_volumes = self.out_conv2(cost_volumes) # [B * K, 128, H, W]
         # cost_volumes = self.up_conv1(cost_volumes) # [B * K, 128, H//2, W//2]
         # cost_volumes = self.gn1(cost_volumes) # [B * K, 128, H//2, W//2]
         # cost_volumes = self.silu(cost_volumes) # [B * K, 128, H//2, W//2]
@@ -161,6 +166,8 @@ class CostVolumeConstructor(L.LightningModule):
         # cost_volumes = self.gn2(cost_volumes) # [B * K, 128, H, W]
         # cost_volumes = self.silu(cost_volumes) # [B * K, 128, H, W]
         # cost_volumes = self.last_conv(cost_volumes) # [B * K, 128, H, W]
-        cost_volumes = cost_volumes.reshape(b, k, self.feature_dim, h*4, w*4).permute(0, 1, 3, 4, 2) # [B, K, H, W, 128]
+        # cost_volumes = cost_volumes.reshape(b, k, self.feature_dim, h*4, w*4).permute(0, 1, 3, 4, 2) # [B, K, H, W, 128]
+        cost_volumes = cost_volumes.reshape(b, k, self.feature_dim, h, w).permute(0, 1, 3, 4, 2) # [B, K, H, W, 128]
         # assert torch.isfinite(cost_volumes).all(), "cost_volumes is not finite"
-        return cost_volumes # [B, K, H, W, 128]
+        # return cost_volumes # [B, K, H, W, 128]
+        return cost_volumes # [B, K, H//4, W//4, 128]
