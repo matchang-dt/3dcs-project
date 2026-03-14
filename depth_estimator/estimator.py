@@ -71,13 +71,8 @@ class DepthEstimator(L.LightningModule):
         """
         b, k, H, W, d = cost_volume.shape # h=H//4, w=W//4
         images = images.reshape(-1, 3, H, W) # [B*K, 3, H, W]
-        features = features.reshape(-1, H//4, W//4, d).permute(0, 3, 1, 2) # [B*K, 128, H//4, W//4]
-        features = F.interpolate(features, size=(H//2, W//2), mode='bilinear', align_corners=False) # [B*K, 128, H, W]
-        features = self.conv1(features) # [B*K, 128, H//2, W//2]
-        features = self.gn(features) # [B*K, 128, H//2, W//2]
-        features = self.silu(features) # [B*K, 128, H//2, W//2]
-        features = F.interpolate(features, size=(H, W), mode='bilinear', align_corners=False) # [B*K, 128, H, W]
-        features = self.conv2(features) # [B*K, 128, H, W]
+
+        ## moved feature upsamling logic out of this module (check model.py)
 
         near = near if near is not None else self.near
         far = far if far is not None else self.far

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from dataclasses import dataclass
 from typing import Optional
-
+import torch.nn.functional as F
 from extractor.extractor import Extractor
 from cost_volume_constructor.constructor import CostVolumeConstructor
 from depth_estimator.estimator import DepthEstimator
@@ -92,6 +92,38 @@ class MVSplat(nn.Module):
             dtype=cfg.pipeline_dtype,
         )
 
+        # build upsampler for TF/CNN features        
+        self.conv1 = nn.Conv2d(cfg.feature_dim * 2, cfg.feature_dim, kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(cfg.feature_dim, cfg.feature_dim, kernel_size=3, stride=1, padding=1, bias=True)
+        self.gn = nn.GroupNorm(num_groups=cfg.feature_dim // 16, num_channels=cfg.feature_dim, eps=1e-6)
+        self.silu = nn.SiLU(inplace=True)
+
+        nn.init.kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.xavier_normal_(self.conv2.weight)
+        nn.init.constant_(self.conv2.bias, 0)
+        nn.init.constant_(self.gn.weight, 1)
+        nn.init.constant_(self.gn.bias, 0)
+
+        # interpolate wrapper (for functional)
+        class Interpolate(nn.Module):
+            def __init__(self, size, mode='bilinear', align_corners=False):
+                super().__init__()
+                self.size = size
+                self.mode = mode
+                self.align_corners = align_corners
+
+            def forward(self, x):
+                return F.interpolate(x, size=self.size, mode=self.mode, align_corners=self.align_corners)
+
+        self.feature_upsampler = nn.Sequential(
+            Interpolate(size=(h * 2, w * 2)),
+            self.conv1,
+            self.gn,
+            self.silu,
+            Interpolate(size=(h * 4, w * 4)),
+            self.conv2
+        )
+
         self.depth_estimator = DepthEstimator(
             near=cfg.near,
             far=cfg.far,
@@ -160,8 +192,9 @@ class MVSplat(nn.Module):
             ).view(B, num_target_views)
 
         # 1. Extract features
-        features = self.extractor(context_images)
-        features = features.to(self.cfg.pipeline_dtype)
+        features, features_cnn = self.extractor(context_images)
+        features = features.to(self.cfg.pipeline_dtype) # [B, V, H//4, W//4, 128]
+        features_cnn = features_cnn.to(self.cfg.pipeline_dtype) # [B, V, 128, H//4, W//4]
 
         with torch.autocast(device_type='cuda', enabled=False):
             proj_matrices = make_proj_matrix(context_extrinsics, context_intrinsics)
@@ -174,17 +207,24 @@ class MVSplat(nn.Module):
 
         # 2. Cost volume (needs scalar near/far for depth plane generation)
         cost_volume = self.cost_volume_constructor(
-            features=features,
+            features=features, # TF features only
             Ps=proj_matrices,
             near=n_scalar,
             far=f_scalar,
         )
 
+        features = features.reshape(B * K, self.cfg.feature_dim, H//4, W//4)    # [B*K, 128, H//4, W//4]
+        features_cnn = features_cnn.reshape(B * K, self.cfg.feature_dim, H//4, W//4)  # [B*K, 128, H//4, W//4]
+
+        upsampled_features_all = self.feature_upsampler(
+            torch.cat([features, features_cnn], dim=1)
+        ) # [B*K, C, H, W]
+
         # 3. Depth estimation (needs scalar near/far for inv_depth linspace)
         depth_maps, depth_conf = self.depth_estimator(
             cost_volume=cost_volume,
             images=context_images,
-            features=features,
+            features=upsampled_features_all, # these will get upsampled, but gaussian head needs too 
             near=n_scalar,
             far=f_scalar,
         )
@@ -195,7 +235,7 @@ class MVSplat(nn.Module):
             depth_map=depth_maps,
             depth_conf=depth_conf,
             images=context_images,
-            features=features,
+            features=upsampled_features_all.reshape(B, K, self.cfg.feature_dim, H, W).permute(0, 1, 3, 4, 2), # [B, K, H, W, C]
             extrinsics=context_extrinsics,
             intrinsics=context_intrinsics,
             global_step=global_step,

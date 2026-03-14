@@ -108,14 +108,14 @@ class CostVolumeConstructor(L.LightningModule):
         self.register_buffer('volume_grids', volume_grids)
 
     def forward(self, features, Ps, near=None, far=None):
-        # features.shape  [B, K, H//4, W//4, 128]
+        # features.shape  [B, K, H//4, W//4, 128] (thees are transformer feats. only)
         # Ps.shape [B, K, 4, 4]
         f_srcs = []
         f_tgts = []
         P_srcs = []
         P_tgts = []
         b, k, h, w, _ = features.shape
-        for i in range(b):
+        for i in range(b):  # exclude-one-out matrices for each cost volume
             for j in range(k):
                 f_src = features[i, j, :, :, :]
                 P_src = Ps[i, j, :, :]
