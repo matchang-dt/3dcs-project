@@ -1,0 +1,53 @@
+# @package _global_
+# Evaluation configuration for MVSplat.
+#
+# Usage:
+#   python eval.py checkpoint_path=/path/to/checkpoint.ckpt
+#   python eval.py checkpoint_path=/path/to/checkpoint.ckpt datasets=[re10k,acid]
+#   python eval.py checkpoint_path=/path/to/checkpoint.ckpt save_images_dir=outputs/eval
+#
+# To limit to a few batches for a quick smoke-test:
+#   python eval.py checkpoint_path=/path/to/ckpt max_batches_per_dataset=5
+
+defaults:
+  - model        # inherits image_size, sh_degree, scale_min/max, etc.
+  - _self_
+
+# ---- checkpoint to evaluate ----
+checkpoint_path: checkpoints/checkpoint.ckpt   # REQUIRED: path to .ckpt file
+
+# ---- deterministic view sampling (same views every run) ----
+eval_seed: 42
+
+# ---- datasets to include (any subset of the five below) ----
+datasets:
+  - re10k
+  - acid
+  - tnt
+  - deepblending
+  # - dtu
+
+# ---- dataset roots ----
+re10k_data_root: /workspace/re10kvol/re10k
+acid_data_root:  /workspace/re10kvol/acid
+tnt_data_root:   /workspace/re10kvol/tnt
+deepblending_data_root: /workspace/re10kvol/deepblending
+dtu_data_root:   /workspace/re10kvol/dtu
+
+# DTU: which lighting condition (0-6)
+dtu_light_idx: 3
+
+# ---- eval settings ----
+num_input_views:  2
+num_target_views: 4    # -1 = all views (recommended for TNT/DeepBlending scenes)
+batch_size: 1
+num_workers: 4
+
+# ---- output ----
+output_json: outputs/eval_results.json
+
+# ---- optional: save rendered images alongside GT ----
+# save_images_dir: outputs/eval_images
+
+# ---- optional: cap batches per dataset (useful for quick tests) ----
+# max_batches_per_dataset: 10
