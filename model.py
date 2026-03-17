@@ -232,8 +232,8 @@ class MVSplat(nn.Module):
 
         # 1. Extract features
         features, features_cnn = self.extractor(context_images)
-        features = features.to(self.cfg.pipeline_dtype) # [B, V, H//4, W//4, 128]
-        features_cnn = features_cnn.to(self.cfg.pipeline_dtype) # [B, V, 128, H//4, W//4]
+        features = features.to(self.cfg.pipeline_dtype) # [B, V, H//4, W//4, C]
+        features_cnn = features_cnn.to(self.cfg.pipeline_dtype) # [B, V, H//4, W//4, C]
 
         with torch.autocast(device_type='cuda', enabled=False):
             proj_matrices = make_proj_matrix(context_extrinsics, context_intrinsics)
@@ -249,8 +249,10 @@ class MVSplat(nn.Module):
             Ps=proj_matrices
         )
 
-        features = features.reshape(B * K, self.cfg.feature_dim, H//4, W//4)    # [B*K, 128, H//4, W//4]
-        features_cnn = features_cnn.reshape(B * K, self.cfg.feature_dim, H//4, W//4)  # [B*K, 128, H//4, W//4]
+        features = features.permute(0, 1, 4, 2, 3) # to [B, V, C, H//4, W//4]
+        features = features.reshape(B * K, self.cfg.feature_dim, H//4, W//4)  # [B*K, C, H//4, W//4]
+        features_cnn = features_cnn.permute(0, 1, 4, 2, 3) # to [B, V, C, H//4, W//4]
+        features_cnn = features_cnn.reshape(B * K, self.cfg.feature_dim, H//4, W//4)  # [B*K, C, H//4, W//4]
 
         upsampled_features_all = self.feature_upsampler(
             torch.cat([features, features_cnn], dim=1)

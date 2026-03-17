@@ -40,16 +40,16 @@ class Extractor(L.LightningModule):
         Args:
             x (torch.Tensor): input tensor of shape [B, K, 3, H, W]
         Returns:
-            out (torch.Tensor): output tensor of shape [B, K, H//4, W//4, 128]
+            out (torch.Tensor): output tensor of shape [B, K, H//4, W//4, C=128]
         """
         B, K, _, H, W = x.shape
         # assert torch.isfinite(x).all(), "input to extractor is not finite"
-        x_cnn = self.cnn_extractor(x) # [B, K, 128, H//4, W//4]
+        x_cnn = self.cnn_extractor(x) # [B, K, C=128, H//4, W//4]
         # assert torch.isfinite(x).all(), "activation after cnn extractor is not finite"
-        x = patchify(x_cnn) # [B*K, K=(src|tgt), H//4, W//4, 128]
+        x = patchify(x_cnn) # [B*K, K=(src|tgt), H//4, W//4, C]
         # assert torch.isfinite(x).all(), "pachified data in extractor is not finite"
         x = x.to(self.transformer_extractor.dtype)
-        x = self.transformer_extractor(x) # [B*K, H//4, W//4, 128]
+        x = self.transformer_extractor(x) # [B*K, H//4, W//4, C]
         # assert torch.isfinite(x).all(), "output from transformer extractor is not finite"
         x = x.reshape(B, K, H//4, W//4, self.dim)
-        return x, x_cnn # [B, K, H//4, W//4, 128]
+        return x, x_cnn.permute(0, 1, 3, 4, 2) # [B, K, H//4, W//4, C], both

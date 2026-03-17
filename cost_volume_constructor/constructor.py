@@ -24,8 +24,8 @@ def generate_volume_grids(h, w, near, far, depth_steps=128):
     v_grids = (torch.arange(w, dtype=torch.float32) + 0.5) / w
     v_grids = v_grids.reshape(1, w, 1).expand(h, w, 1)
 
-    uv_grids = torch.stack(
-        [u_grids, v_grids, torch.ones_like(u_grids, dtype=torch.float32)], dim=-1
+    uv_grids = torch.stack( # expects col, row
+        [v_grids, u_grids, torch.ones_like(v_grids, dtype=torch.float32)], dim=-1
     ).expand(h, w, depth_steps, 3) # [h, w, 128, 3]
     inv_depths = torch.linspace(1/far, 1/near, depth_steps, dtype=torch.float32)
     inv_depths = inv_depths.reshape(1, 1, depth_steps, 1).expand(h, w, depth_steps, 1) #[h, w, 128, 1]

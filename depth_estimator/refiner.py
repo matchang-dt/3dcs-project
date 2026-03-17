@@ -157,8 +157,5 @@ class DepthRefiner(L.LightningModule):
         out = self.final_gn(h9) # [B*K, 128, H, W]
         out = self.silu(out)
         out = self.final_conv(out) # [B*K, 1, H, W]
-        out = self.final_gn(h9) # [B*K, 128, H, W]
-        out = self.silu(out)
-        out = self.final_conv(out) # [B*K, 1, H, W]
         out = out.permute(0, 2, 3, 1).reshape(b, k, H, W) # [B, K, H, W]
         return out # [B, K, H, W]

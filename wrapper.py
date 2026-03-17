@@ -340,22 +340,26 @@ class MVSplatWrapper(L.LightningModule):
                 depth_grid = make_grid(depth_stack, nrow=nrow, padding=4, normalize=False)
 
             # Context depth maps visualization
-            context_depth_grid = None
+            inv_context_depth_grid = None
             if "depth_maps" in outputs:
                 context_depth_maps = outputs["depth_maps"]  # [B, K, H, W]
-                # Take first batch
                 context_depth_b0 = context_depth_maps[0] if context_depth_maps.ndim == 4 else context_depth_maps  # [K, H, W]
-                # vmax = torch.quantile(context_depth_b0.flatten(), 0.92, interpolation='lower')
-                # vmin = torch.quantile(context_depth_b0.flatten(), 0.0, interpolation='higher')
-                # context_depth_vis = (context_depth_b0 - vmin) / (vmax - vmin + 1e-6).clamp(0, 1)
-                # context_depth_jet_list = [_apply_jet_cmap(context_depth_vis[k]) for k in range(context_depth_vis.shape[0])]
-                # context_depth_stack = torch.stack(context_depth_jet_list, dim=0)  # [K, 3, H, W]
-                # context_depth_grid = make_grid(context_depth_stack, nrow=context_nrow, padding=4, normalize=False)
-                context_depth_global_max = context_depth_b0.max() + 1e-6
-                context_depth_vis = ((context_depth_b0 / context_depth_global_max) * 10).clamp(0, 1)
-                context_depth_jet_list = [_apply_jet_cmap(context_depth_vis[k]) for k in range(context_depth_vis.shape[0])]
-                context_depth_stack = torch.stack(context_depth_jet_list, dim=0)  # [K, 3, H, W]
-                context_depth_grid = make_grid(context_depth_stack, nrow=context_nrow, padding=4, normalize=False)
+                
+                # Visualize inverse depth — better perceptual spread for nearby geometry
+                inv_context_depth_b0 = 1.0 / context_depth_b0.clamp(min=1e-6)
+                
+                # Quantile-based normalization to handle outliers robustly
+                flat = inv_context_depth_b0.flatten()
+                vmin = torch.quantile(flat, 0.02)
+                vmax = torch.quantile(flat, 0.98)
+                inv_context_depth_vis = ((inv_context_depth_b0 - vmin) / (vmax - vmin + 1e-6)).clamp(0, 1)
+                
+                inv_context_depth_jet_list = [
+                    _apply_jet_cmap(inv_context_depth_vis[k]) 
+                    for k in range(inv_context_depth_vis.shape[0])
+                ]
+                inv_context_depth_stack = torch.stack(inv_context_depth_jet_list, dim=0)  # [K, 3, H, W]
+                inv_context_depth_grid = make_grid(inv_context_depth_stack, nrow=context_nrow, padding=4, normalize=False)
 
             # Diff grid (rendered vs target)
             diff_list = []
@@ -390,11 +394,11 @@ class MVSplatWrapper(L.LightningModule):
                     images=[diff_grid.cpu().permute(1, 2, 0).numpy()],
                     caption=["|rendered - target| (jet)"],
                 )
-                if context_depth_grid is not None:
+                if inv_context_depth_grid is not None:
                     self.logger.log_image(
                         key=f"{key_prefix}/context_depth_grid",
-                        images=[context_depth_grid.cpu().permute(1, 2, 0).numpy()],
-                        caption=["context depth maps (jet)"],
+                        images=[inv_context_depth_grid.cpu().permute(1, 2, 0).numpy()],
+                        caption=["context inv-depth maps (jet, 2–98 percentile)"],
                     )
             elif hasattr(self.logger.experiment, "add_image"):
                 self.logger.experiment.add_image(f"{key_prefix}/rendered_grid", rendered_grid, step)
@@ -403,8 +407,8 @@ class MVSplatWrapper(L.LightningModule):
                 self.logger.experiment.add_image(f"{key_prefix}/diff_grid", diff_grid, step)
                 if depth_grid is not None:
                     self.logger.experiment.add_image(f"{key_prefix}/depth_grid", depth_grid, step)
-                if context_depth_grid is not None:
-                    self.logger.experiment.add_image(f"{key_prefix}/context_depth_grid", context_depth_grid, step)
+                if inv_context_depth_grid is not None:
+                    self.logger.experiment.add_image(f"{key_prefix}/context_disp_grid", inv_context_depth_grid, step)
         except Exception as e:
             print(f"Warning: Error logging images: {e}")
     
