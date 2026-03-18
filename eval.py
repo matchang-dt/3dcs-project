@@ -5,9 +5,13 @@ Usage:
     python eval.py checkpoint_path=/path/to/checkpoint.ckpt
     python eval.py checkpoint_path=/path/to/checkpoint.ckpt datasets=[re10k,acid]
     python eval.py checkpoint_path=/path/to/checkpoint.ckpt save_images_dir=outputs/eval_images
+
+With save_images_dir, each scene folder gets context_v*.png, rendered_v*.png, target_v*.png.
+Replicate runs: set eval_seed and eval_num_workers: 0 in configs/eval.yaml (or CLI overrides).
 """
 import json
 import math
+import random
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +22,7 @@ import torch.nn.functional as F
 import torchvision
 from torch.utils.data import DataLoader
 import hydra
+import numpy as np
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
@@ -32,6 +37,22 @@ from datasets.dataset_acid import AcidDataset
 from datasets.dataset_tnt import TanksAndTemplesDataset
 from datasets.dataset_deepblending import DeepBlendingDataset
 from utils.projection import make_proj_matrix
+
+
+def set_eval_seed(seed: int) -> None:
+    """Fix random, NumPy, and PyTorch RNGs so view sampling and model noise (if any) match across runs."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def _make_worker_init_fn(base_seed: int):
+    def _fn(worker_id: int) -> None:
+        set_eval_seed(base_seed + worker_id)
+
+    return _fn
 
 
 def compute_psnr(
@@ -226,9 +247,12 @@ def evaluate_dataset(model, loader, name, device, lpips_fn, ssim_fn, save_dir, m
             if save_dir:
                 out = Path(save_dir) / name / sk
                 out.mkdir(parents=True, exist_ok=True)
+                c_i = batch["context"]["images"][i].detach().cpu().clamp(0.0, 1.0)
+                for k in range(c_i.shape[0]):
+                    torchvision.utils.save_image(c_i[k], out / f"context_v{k:02d}.png")
                 for v in range(r_i.shape[0]):
-                    torchvision.utils.save_image(r_i[v], out / f"rendered_v{v:02d}.png")
-                    torchvision.utils.save_image(t_i[v], out / f"target_v{v:02d}.png")
+                    torchvision.utils.save_image(r_i[v].cpu(), out / f"rendered_v{v:02d}.png")
+                    torchvision.utils.save_image(t_i[v].cpu(), out / f"target_v{v:02d}.png")
 
     def mean(lst): return round(sum(lst) / len(lst), 4) if lst else 0.0
     return {
@@ -246,33 +270,41 @@ def _ns(name, root, stage, ni, nt, sz):
     )
 
 
-def build_eval_loaders(cfg):
+def build_eval_loaders(cfg, eval_seed: int):
     wanted = list(cfg.datasets)
     ni, nt, sz = int(cfg.num_input_views), int(cfg.num_target_views), int(cfg.image_size)
-    nw, bs = int(cfg.num_workers), int(cfg.batch_size)
+    bs = int(cfg.batch_size)
+    nw = OmegaConf.select(cfg, "eval_num_workers", default=None)
+    if nw is None:
+        nw = int(cfg.num_workers)
+    else:
+        nw = int(nw)
+    worker_kw = {}
+    if nw > 0:
+        worker_kw["worker_init_fn"] = _make_worker_init_fn(eval_seed)
     loaders = {}
     if "re10k" in wanted:
         loaders["re10k"] = DataLoader(
             Re10kDataset(cfg=_ns("re10k", cfg.re10k_data_root, "test", ni, nt, sz)),
-            batch_size=bs, num_workers=nw, collate_fn=collate_fn, pin_memory=True)
+            batch_size=bs, num_workers=nw, collate_fn=collate_fn, pin_memory=True, **worker_kw)
     if "acid" in wanted:
         loaders["acid"] = DataLoader(
             AcidDataset(cfg=_ns("acid", cfg.acid_data_root, "test", ni, nt, sz)),
-            batch_size=bs, num_workers=nw, collate_fn=collate_fn, pin_memory=True)
+            batch_size=bs, num_workers=nw, collate_fn=collate_fn, pin_memory=True, **worker_kw)
     if "tnt" in wanted:
         nt_tnt = -1 if nt <= 0 else nt
         loaders["tnt"] = DataLoader(
             TanksAndTemplesDataset(data_root=cfg.tnt_data_root, stage="test",
                 num_input_views=ni, num_target_views=nt_tnt,
                 target_image_size=sz, max_train_steps=0),
-            batch_size=1, num_workers=nw, collate_fn=collate_fn, pin_memory=True)
+            batch_size=1, num_workers=nw, collate_fn=collate_fn, pin_memory=True, **worker_kw)
     if "deepblending" in wanted:
         nt_db = -1 if nt <= 0 else nt
         loaders["deepblending"] = DataLoader(
             DeepBlendingDataset(data_root=cfg.deepblending_data_root, stage="test",
                 num_input_views=ni, num_target_views=nt_db,
                 target_image_size=sz, max_train_steps=0),
-            batch_size=1, num_workers=nw, collate_fn=collate_fn, pin_memory=True)
+            batch_size=1, num_workers=nw, collate_fn=collate_fn, pin_memory=True, **worker_kw)
     return loaders
 
 
@@ -286,6 +318,10 @@ def main(cfg: DictConfig) -> None:
     if not Path(ckpt).exists():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt}")
 
+    eval_seed = int(OmegaConf.select(cfg, "eval_seed", default=42))
+    set_eval_seed(eval_seed)
+    print(f"eval_seed={eval_seed} (same checkpoint + seed + eval_num_workers reproduces view sampling)")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
@@ -296,7 +332,7 @@ def main(cfg: DictConfig) -> None:
     lpips_fn = LPIPS(net="vgg").to(device).eval()
     ssim_fn = StructuralSimilarityIndexMeasure(data_range=1.0).to(device)
 
-    loaders = build_eval_loaders(cfg)
+    loaders = build_eval_loaders(cfg, eval_seed=eval_seed)
     if not loaders:
         raise ValueError(f"No datasets to evaluate. datasets={list(cfg.datasets)}")
 
@@ -306,7 +342,10 @@ def main(cfg: DictConfig) -> None:
         Path(save_dir).mkdir(parents=True, exist_ok=True)
 
     results = {
-        "checkpoint": ckpt, "num_parameters": n_params,
+        "checkpoint": ckpt,
+        "num_parameters": n_params,
+        "eval_seed": eval_seed,
+        "eval_num_workers": OmegaConf.select(cfg, "eval_num_workers", default=None),
         "config": OmegaConf.to_container(cfg, resolve=True),
         "datasets": {},
     }

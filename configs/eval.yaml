@@ -16,8 +16,10 @@ defaults:
 # ---- checkpoint to evaluate ----
 checkpoint_path: checkpoints/checkpoint.ckpt   # REQUIRED: path to .ckpt file
 
-# ---- deterministic view sampling (same views every run) ----
+# Reproducibility: same checkpoint + eval_seed + eval_num_workers => same views & metrics.
+# Use eval_num_workers: 0 for identical batch order (multi-worker loaders can reorder batches).
 eval_seed: 42
+eval_num_workers: 0
 
 # ---- datasets to include (any subset of the five below) ----
 datasets:
@@ -47,7 +49,7 @@ num_workers: 4
 output_json: outputs/eval_results.json
 
 # ---- optional: save rendered images alongside GT ----
-# save_images_dir: outputs/eval_images
+save_images_dir: outputs/eval_images
 
 # ---- optional: cap batches per dataset (useful for quick tests) ----
 # max_batches_per_dataset: 10

@@ -29,7 +29,7 @@ import numpy as np
 
 from .view_sampler.view_sampler import ViewSet, ViewSampler, ViewSamplerDefault
 from .shims.crop_shim import apply_crop_shim_to_views, update_intrinsics_for_resize, update_intrinsics_for_crop
-from .shims.norm_shim import normalize_scene
+from .shims.norm_shim import normalize_scene, normalize_intrinsics
 
 
 def read_next_bytes(fid, num_bytes, format_char_sequence, endian_character="<"):
@@ -353,6 +353,8 @@ class ColmapDataset(IterableDataset, ABC):
             # Sort images by name for consistency
             image_list = sorted(colmap_images.values(), key=lambda x: x['name'])
             
+            H_target, W_target = self.target_image_size if isinstance(self.target_image_size, tuple) else (self.target_image_size, self.target_image_size)
+
             images = []
             intrinsics_list = []
             extrinsics_list = []
@@ -402,7 +404,6 @@ class ColmapDataset(IterableDataset, ABC):
                 K = update_intrinsics_for_crop(K, (H_actual, W_actual), (H_cropped, W_cropped))
                 
                 # Step 3: Resize to target_image_size
-                H_target, W_target = self.target_image_size if isinstance(self.target_image_size, tuple) else (self.target_image_size, self.target_image_size)
                 img = img.resize((W_target, H_target), Image.LANCZOS)
                 
                 # Adjust intrinsics for resize
@@ -433,7 +434,7 @@ class ColmapDataset(IterableDataset, ABC):
             
             viewset = ViewSet(
                 extrinsics=extrinsics_tensor,
-                intrinsics=intrinsics_tensor,
+                intrinsics=normalize_intrinsics(intrinsics_tensor, image_size=(H_target, W_target)),
                 images=images_tensor
             )
             
@@ -463,7 +464,8 @@ class ColmapDataset(IterableDataset, ABC):
             all_views = self.load_scene(scene_dir)
             
             # Center and normalize scene using all cameras
-            all_views, _ = normalize_scene(all_views)
+            # (no longer do this), as per re10k and acid
+            # all_views, _ = normalize_scene(all_views)
             
             if all_views is None:
                 continue
