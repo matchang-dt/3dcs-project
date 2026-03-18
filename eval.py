@@ -173,17 +173,20 @@ def timed_forward(model, batch, device):
         proj = proj.to(raw.cfg.pipeline_dtype)
         # 2. Cost volume: transformer features only
         cost_vol = raw.cost_volume_constructor(features=features, Ps=proj)
-        # 3. Upsample concat(transformer, cnn) for depth and splat head
-        features_flat = features.reshape(B * K, raw.cfg.feature_dim, H // 4, W // 4)
-        features_cnn_flat = features_cnn.reshape(B * K, raw.cfg.feature_dim, H // 4, W // 4)
+        # 3. Upsample concat(transformer, cnn) for depth and splat head (must permute before reshape)
+        # features [B,K,h,w,C] -> [B,K,C,h,w] -> [B*K,C,h,w]
+        features = features.permute(0, 1, 4, 2, 3).reshape(B * K, raw.cfg.feature_dim, H // 4, W // 4)
+        features_cnn = features_cnn.permute(0, 1, 4, 2, 3).reshape(B * K, raw.cfg.feature_dim, H // 4, W // 4)
         upsampled_features_all = raw.feature_upsampler(
-            torch.cat([features_flat, features_cnn_flat], dim=1)
+            torch.cat([features, features_cnn], dim=1)
         )  # [B*K, C, H, W]
         # 4. Depth estimator: cost_volume, images, upsampled features
         depth_maps, depth_conf = raw.depth_estimator(
             cost_volume=cost_vol, images=ctx_img, features=upsampled_features_all,
         )
-        depth_maps = torch.clamp(depth_maps, min=near.min().item() + 1e-4, max=far.max().item() - 1e-4)
+        n = near.min() if isinstance(near, torch.Tensor) else near
+        f = far.max() if isinstance(far, torch.Tensor) else far
+        depth_maps = torch.clamp(depth_maps, min=n, max=f)
         head = getattr(raw, "splat_head", None) or getattr(raw, "gaussian_head", raw.splat_head)
         # 5. Splat head: features as [B, K, H, W, C]
         features_for_head = upsampled_features_all.reshape(
